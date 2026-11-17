@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scaffold:
+    name: Scaffold checks (not application tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Check required implementation briefs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s ARCHITECTURE.md
+          test -s .github/copilot-instructions.md
+          for component in transport-data routing school-discovery school-details school-rankings frontend; do
+            test -s "components/$component/ARCHITECTURE.md"
+          done
+      - name: Check latest commit whitespace
+        run: git show --format= --check HEAD
+      # Add real lint, fixture tests, and image builds as each component is implemented.
