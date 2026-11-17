@@ -17,6 +17,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Check required implementation briefs
         shell: bash
@@ -27,6 +28,25 @@ jobs:
           for component in transport-data routing school-discovery school-details school-rankings frontend; do
             test -s "components/$component/ARCHITECTURE.md"
           done
-      - name: Check latest commit whitespace
-        run: git show --format= --check HEAD
+      - name: Check changed whitespace
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$PR_BASE...$PR_HEAD"
+          elif [[ "$EVENT_NAME" == "push" && "$BEFORE" =~ ^0+$ ]]; then
+            while IFS= read -r commit; do
+              git show --format= --check "$commit"
+            done < <(jq -r '.commits[].id' "$GITHUB_EVENT_PATH")
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            git diff --check "$BEFORE" "$AFTER"
+          else
+            git show --format= --check HEAD
+          fi
       # Add real lint, fixture tests, and image builds as each component is implemented.
