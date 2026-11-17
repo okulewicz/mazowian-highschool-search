@@ -38,8 +38,9 @@ They favor caution over speed; use judgment for trivial tasks.
 
 1. **Think before coding.** State assumptions explicitly. If several
    interpretations exist, present them rather than choosing silently. Mention
-   simpler approaches and push back when warranted. If something is unclear,
-   stop, name it, and ask.
+   simpler approaches and push back when warranted. **If you do not know,
+   ask** rather than guess: stop, name what is unclear, and follow the
+   open-questions protocol below.
 2. **Simplicity first.** Write the minimum code that solves the problem: no
    unrequested features, single-use abstractions, speculative configurability,
    or error handling for impossible scenarios. If 200 lines could be 50, rewrite.
@@ -53,5 +54,6 @@ They favor caution over speed; use judgment for trivial tasks.
 
 ## Open questions
 
-Owner decisions are tracked in the open-questions table in `ARCHITECTURE.md`;
-see `.github/instructions/open-questions.instructions.md` for how to handle them.
+Owner decisions are tracked in the open-questions table in `ARCHITECTURE.md`.
+Whenever you must ask the owner anything, follow the protocol in
+`.github/instructions/open-questions.instructions.md`.

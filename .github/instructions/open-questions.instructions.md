@@ -1,21 +1,32 @@
 ---
-applyTo: "**/ARCHITECTURE.md"
+applyTo: "**"
 ---
 
-# Discussing and resolving open questions
+# Open questions protocol
 
-The "Open questions for the owner" table in the root `ARCHITECTURE.md` records
-decisions that belong to the repository owner (scope, component boundaries,
-data sources and licensing, privacy, hosting). Technical details are yours.
+Use this whenever you do not know something the owner must decide: scope,
+component boundaries, data sources and licensing, privacy, hosting, or any
+unclear requirement. Owner-level decisions are tracked in the "Open questions
+for the owner" table in the root `ARCHITECTURE.md`. Technical details are yours.
 
-- Before implementing, check whether the work depends on an open question. If
-  it does, ask the owner rather than choosing an answer.
-- When asking, state the question, 2-3 realistic options with trade-offs, and
-  your recommendation. Ask one decision at a time; do not bundle unrelated ones.
-- Record the owner's answer in the table (replace `Open`, keep the question
-  text) and update every affected component brief, producer and consumer alike.
+## How to ask
+
+1. **Respect that the owner is a human.** Ask the most important question
+   first, the one whose answer unblocks or changes the most work.
+2. **One question at a time.** Do not bundle questions; wait for the answer,
+   then ask the next if still needed.
+3. **Offer 2-4 concrete answers plus an "Other" option** so the owner can answer
+   freely. Give a one-line trade-off for each and mark your recommendation.
+4. **Do not wonder.** No speculation, long analysis, or tangents. Stay on the
+   task at hand and ask only what the task needs.
+
+## After the answer
+
+- Record owner-level answers in the open-questions table (replace `Open`, keep
+  the question text) and update every affected component brief, producer and
+  consumer alike.
 - Add newly discovered owner-level questions to the table; do not resolve them
   silently or bury them in a component brief.
-- Do not mark a question answered based on assumptions, sample data, or your
-  own recommendation. Do not expand scope or change component boundaries
-  without an explicit owner decision.
+- Never mark a question answered from assumptions, sample data, or your own
+  recommendation, and never change scope or component boundaries without an
+  explicit owner decision.
