@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "osm": {
+    "id": "geofabrik-mazowieckie",
+    "url": "https://download.geofabrik.de/europe/poland/mazowieckie-latest.osm.pbf",
+    "license": "ODbL-1.0",
+    "attribution": "© OpenStreetMap contributors; Geofabrik GmbH"
+  },
+  "gtfs": [
+    {
+      "id": "warsaw",
+      "url": "https://mkuran.pl/gtfs/warsaw.zip",
+      "license": "ZTM Warszawa Data Usage Terms; bus shapes under ODbL-1.0",
+      "attribution": "ZTM Warszawa; Mikołaj Kuranowski; OpenStreetMap contributors"
+    },
+    {
+      "id": "wkd",
+      "url": "https://mkuran.pl/gtfs/wkd.zip",
+      "license": "CC0-1.0",
+      "attribution": "Warszawska Kolej Dojazdowa"
+    },
+    {
+      "id": "polish-trains",
+      "url": "https://mkuran.pl/gtfs/polish_trains.zip",
+      "license": "PKP PLK and Koleje Mazowieckie public-sector data usage terms",
+      "attribution": "PKP PLK; Koleje Mazowieckie"
+    }
+  ]
+}

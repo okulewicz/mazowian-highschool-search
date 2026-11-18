@@ -9,6 +9,10 @@ All notable changes to this project are documented here, following
 
 - Initial architecture and implementation briefs for the six project
   components.
+- Local transport refresh container for Kuran static GTFS feeds and Geofabrik
+  Mazowieckie OSM, plus pinned OTP v2.10 graph building, smoke testing, and
+  atomic activation.
+- Offline transport and routing fixture tests and local Compose instructions.
 
 ### Changed
 
