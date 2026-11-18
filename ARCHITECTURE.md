@@ -162,7 +162,7 @@ Technical details within the agreed boundaries remain Copilot's responsibility.
 | --- | --- |
 | Does coverage mean all Mazowieckie schools, only Warsaw, or also cross-border commutes and neighboring transport feeds? | Open |
 | Which school types are included: licea, technika, vocational, public, private? | Open |
-| Which official school registry and GTFS providers may be used, and is their data redistributable? | Open |
+| Which official school registry and GTFS providers may be used, and is their data redistributable? | Partly answered 2026-11-18: the owner approved the mkuran.pl Warsaw, WKD, and Polish Trains feeds listed in `components/transport-data/sources.json` for retrieval and snapshot publication under their listed source terms. This does not approve other feeds or resolve the school registry choice. |
 | What data refresh cadence and maximum acceptable staleness are needed? | Open |
 | Does “car” require car-only routes, park-and-ride, drop-off, or all of these? If OTP v2.10 cannot meet a requirement, what architecture change is acceptable? | Open |
 | Which mixed modes, departure/arrival times, accessibility needs, and acceptable routing latency should the comparison support? | Open |

@@ -22,7 +22,7 @@ jobs:
         run: python3 -m unittest discover -s components/transport-data/tests -v
 
   scaffold:
-    name: Scaffold checks (not application tests)
+    name: Scaffold checks
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -61,4 +61,4 @@ jobs:
           else
             git show --format= --check HEAD
           fi
-      # Add real lint, fixture tests, and image builds as each component is implemented.
+      # Add component-specific checks as more application code is introduced.

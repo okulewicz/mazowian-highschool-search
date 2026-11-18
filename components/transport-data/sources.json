@@ -1,12 +1,18 @@
 {
   "schema_version": 1,
   "index_url": "https://mkuran.pl/gtfs/",
+  "approval": {
+    "status": "approved",
+    "approved_on": "2026-11-18",
+    "scope": "Owner-approved retrieval and snapshot publication for the mkuran.pl Warsaw, WKD, and Polish Trains feeds listed in this file, under each source's listed terms."
+  },
   "sources": [
     {
       "id": "ztm-warsaw-static",
       "operator": "Warszawski Transport Publiczny (ZTM Warszawa)",
       "kind": "static_gtfs",
       "url": "https://mkuran.pl/gtfs/warsaw.zip",
+      "approved_for_download": true,
       "geographic_coverage": "Warsaw metropolitan area, as published upstream",
       "required": true,
       "license": [
@@ -18,6 +24,9 @@
         "ZTM Warszawa",
         "Mikołaj Kuranowski",
         "OpenStreetMap contributors"
+      ],
+      "limitations": [
+        "Do not infer in-seat transfers from block_id; only transfers.txt describes transfers."
       ]
     },
     {
@@ -25,6 +34,7 @@
       "operator": "Warszawski Transport Publiczny (ZTM Warszawa)",
       "kind": "gtfs_realtime_alerts",
       "url": "https://mkuran.pl/gtfs/warsaw/alerts.pb",
+      "approved_for_download": true,
       "geographic_coverage": "Warsaw metropolitan area, as published upstream",
       "required": false,
       "license": [
@@ -37,6 +47,7 @@
       "operator": "Miasto Stołeczne Warszawa",
       "kind": "gtfs_realtime_vehicle_positions",
       "url": "https://mkuran.pl/gtfs/warsaw/vehicles.pb",
+      "approved_for_download": true,
       "geographic_coverage": "Warsaw metropolitan area, as published upstream",
       "required": false,
       "license": [
@@ -54,10 +65,14 @@
       "operator": "Warszawska Kolej Dojazdowa (WKD)",
       "kind": "static_gtfs",
       "url": "https://mkuran.pl/gtfs/wkd.zip",
+      "approved_for_download": true,
       "geographic_coverage": "Warsaw metropolitan area, as published upstream",
       "required": true,
       "license": [
         "CC0 1.0"
+      ],
+      "limitations": [
+        "Do not infer in-seat transfers from block_id; only transfers.txt describes transfers."
       ]
     },
     {
@@ -65,18 +80,23 @@
       "operator": "Warszawska Kolej Dojazdowa (WKD)",
       "kind": "gtfs_realtime_trip_updates",
       "url": "https://mkuran.pl/gtfs/wkd.pb",
+      "approved_for_download": true,
       "geographic_coverage": "Warsaw metropolitan area, as published upstream",
       "required": false,
       "license": [
         "CC0 1.0"
       ],
-      "stale_after_seconds": 3600
+      "stale_after_seconds": 3600,
+      "limitations": [
+        "The realtime endpoint may remain stale for over an hour once or twice a day."
+      ]
     },
     {
       "id": "polish-trains-static",
       "operator": "Polish Trains (schedules provided by PKP PLK)",
       "kind": "static_gtfs",
       "url": "https://mkuran.pl/gtfs/polish_trains.zip",
+      "approved_for_download": true,
       "geographic_coverage": "Poland; includes Mazowieckie but is not limited to it",
       "required": true,
       "license": [
@@ -91,6 +111,7 @@
         "Mikołaj Kuranowski"
       ],
       "limitations": [
+        "Do not infer in-seat transfers from block_id; only transfers.txt describes transfers.",
         "The feed includes Polish trains and is not limited to Mazowieckie.",
         "Stop and shape data is collected manually; timed connections and carriage transfers are not available.",
         "Platform and track data is absent for some disembarking-only stops.",
@@ -102,6 +123,7 @@
       "operator": "Polish Trains (schedules provided by PKP PLK)",
       "kind": "realtime_trip_updates_json",
       "url": "https://mkuran.pl/gtfs/polish_trains/updates.json",
+      "approved_for_download": true,
       "geographic_coverage": "Poland; includes Mazowieckie but is not limited to it",
       "required": false,
       "license": [
@@ -111,6 +133,7 @@
       "upstream_readme": "https://github.com/MKuranowski/PolishTrainsGTFS/blob/main/README.md",
       "stale_after_seconds": 3600,
       "limitations": [
+        "Do not infer in-seat transfers from block_id; only transfers.txt describes transfers.",
         "The endpoint can be unstable and may remain stale for over an hour once or twice a day.",
         "Prefer this JSON feed to GTFS-Realtime where its additional data is useful.",
         "Static trip_id values are not particularly stable; use agency_id + number + start_date as a fallback matching strategy.",
@@ -123,6 +146,7 @@
       "operator": "Polish Trains (schedules provided by PKP PLK)",
       "kind": "gtfs_realtime_trip_updates",
       "url": "https://mkuran.pl/gtfs/polish_trains/updates.pb",
+      "approved_for_download": true,
       "geographic_coverage": "Poland; includes Mazowieckie but is not limited to it",
       "required": false,
       "license": [

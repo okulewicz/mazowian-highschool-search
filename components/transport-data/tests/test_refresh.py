@@ -16,17 +16,28 @@ ATTRIBUTIONS = (
 )
 
 
-def static_feed(attributions=ATTRIBUTIONS, unsafe_path=None):
+def static_feed(attributions=ATTRIBUTIONS, unsafe_path=None, table_overrides=None):
     buffer = __import__("io").BytesIO()
+    tables = {
+        "agency.txt": (
+            "agency_id,agency_name,agency_url,agency_timezone\n"
+            "a,Example Agency,https://example.test,Europe/Warsaw\n"
+        ),
+        "routes.txt": (
+            "route_id,agency_id,route_short_name,route_type\n"
+            "r,a,1,3\n"
+        ),
+        "stops.txt": "stop_id,stop_name,stop_lat,stop_lon\ns,Stop,52.2,21.0\n",
+        "trips.txt": "route_id,service_id,trip_id\nr,service,t\n",
+        "stop_times.txt": (
+            "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+            "t,08:00:00,08:00:00,s,1\n"
+        ),
+    }
+    tables.update(table_overrides or {})
     with zipfile.ZipFile(buffer, "w") as archive:
-        for filename in (
-            "agency.txt",
-            "routes.txt",
-            "stops.txt",
-            "trips.txt",
-            "stop_times.txt",
-        ):
-            archive.writestr(filename, "id\nexample\n")
+        for filename, contents in tables.items():
+            archive.writestr(filename, contents)
         archive.writestr(
             "calendar.txt",
             "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
@@ -65,6 +76,7 @@ class RefreshTests(unittest.TestCase):
                 "operator": "ZTM Warszawa",
                 "kind": "static_gtfs",
                 "url": "https://mkuran.pl/gtfs/warsaw.zip",
+                "approved_for_download": True,
                 "geographic_coverage": "Warsaw metropolitan area",
                 "required": True,
                 "license": ["ZTM terms", "ODbL bus shapes"],
@@ -80,6 +92,7 @@ class RefreshTests(unittest.TestCase):
                 "operator": "Miasto Stołeczne Warszawa",
                 "kind": "gtfs_realtime_vehicle_positions",
                 "url": "https://mkuran.pl/gtfs/warsaw/vehicles.pb",
+                "approved_for_download": True,
                 "geographic_coverage": "Warsaw metropolitan area",
                 "required": False,
                 "license": ["Warsaw Open Data Project Usage Terms"],
@@ -95,6 +108,7 @@ class RefreshTests(unittest.TestCase):
                 "operator": "Polish Trains",
                 "kind": "realtime_trip_updates_json",
                 "url": "https://mkuran.pl/gtfs/polish_trains/updates.json",
+                "approved_for_download": True,
                 "geographic_coverage": "Poland",
                 "required": False,
                 "license": ["CC BY 4.0", "PKP PLK terms"],
@@ -102,8 +116,16 @@ class RefreshTests(unittest.TestCase):
             },
         ]
         self.config_path.write_text(
-            json.dumps({"schema_version": 1, "index_url": "https://mkuran.pl/gtfs/",
-                        "sources": self.sources}),
+            json.dumps({
+                "schema_version": 1,
+                "index_url": "https://mkuran.pl/gtfs/",
+                "approval": {
+                    "status": "approved",
+                    "approved_on": "2026-11-18",
+                    "scope": "fixture approval",
+                },
+                "sources": self.sources,
+            }),
             encoding="utf-8",
         )
         self.config_patcher = patch.object(refresh_module, "SOURCES_FILE", self.config_path)
@@ -142,6 +164,10 @@ class RefreshTests(unittest.TestCase):
             "start_date": "20260101", "end_date": "20261231", "expired": False
         })
         self.assertEqual(static["attribution_text"], ATTRIBUTIONS)
+        self.assertIn("sha256", static)
+        self.assertIn("size_bytes", static)
+        self.assertIn("retrieved_at", static)
+        self.assertEqual(manifest["source_approval"]["status"], "approved")
         self.assertEqual((snapshot / "attributions.txt").read_text(), ATTRIBUTIONS)
         self.assertTrue((snapshot / "ztm-warsaw-static.zip").is_file())
         self.assertTrue((snapshot / "warsaw-vehicles.pb").is_file())
@@ -161,6 +187,108 @@ class RefreshTests(unittest.TestCase):
         records = {record["id"]: record for record in manifest["sources"]}
         self.assertEqual(records["ztm-warsaw-static"]["status"], "available")
         self.assertEqual(records["warsaw-vehicles"]["status"], "unavailable")
+        self.assertNotIn("file", records["warsaw-vehicles"])
+        self.assertFalse((snapshot / "warsaw-vehicles.pb").exists())
+
+    def test_realtime_source_requires_a_freshness_threshold(self):
+        del self.sources[2]["stale_after_seconds"]
+        self.config_path.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "index_url": "https://mkuran.pl/gtfs/",
+                "approval": {
+                    "status": "approved",
+                    "approved_on": "2026-11-18",
+                    "scope": "fixture approval",
+                },
+                "sources": self.sources,
+            }),
+            encoding="utf-8",
+        )
+        with self.mock_downloads():
+            snapshot = refresh_module.refresh(self.output)
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        record = next(
+            item for item in manifest["sources"]
+            if item["id"] == "polish-updates-json"
+        )
+        self.assertEqual(record["status"], "unavailable")
+        self.assertNotIn("freshness", record)
+        self.assertNotIn("file", record)
+
+    def test_invalid_optional_realtime_is_not_exposed_in_snapshot(self):
+        with self.mock_downloads(**{
+            self.sources[1]["url"]: b"not a protobuf"
+        }):
+            snapshot = refresh_module.refresh(self.output)
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        record = next(
+            item for item in manifest["sources"]
+            if item["id"] == "warsaw-vehicles"
+        )
+        self.assertEqual(record["status"], "unavailable")
+        self.assertNotIn("file", record)
+        self.assertNotIn("sha256", record)
+        self.assertFalse((snapshot / "warsaw-vehicles.pb").exists())
+
+    def test_unapproved_source_is_not_downloaded(self):
+        self.sources[1]["approved_for_download"] = False
+        self.config_path.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "index_url": "https://mkuran.pl/gtfs/",
+                "approval": {
+                    "status": "approved",
+                    "approved_on": "2026-11-18",
+                    "scope": "fixture approval",
+                },
+                "sources": self.sources,
+            }),
+            encoding="utf-8",
+        )
+        downloads = self.mock_downloads()
+        with downloads as download_mock:
+            snapshot = refresh_module.refresh(self.output)
+        self.assertNotIn(self.sources[1]["url"], [
+            call.args[0] for call in download_mock.call_args_list
+        ])
+        manifest = json.loads((snapshot / "manifest.json").read_text(encoding="utf-8"))
+        record = next(
+            item for item in manifest["sources"]
+            if item["id"] == "warsaw-vehicles"
+        )
+        self.assertEqual(record["status"], "not_approved")
+
+    def test_required_unapproved_source_blocks_publication_without_download(self):
+        self.sources[0]["approved_for_download"] = False
+        self.config_path.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "index_url": "https://mkuran.pl/gtfs/",
+                "approval": {
+                    "status": "approved",
+                    "approved_on": "2026-11-18",
+                    "scope": "fixture approval",
+                },
+                "sources": self.sources,
+            }),
+            encoding="utf-8",
+        )
+        with patch.object(refresh_module, "download") as download_mock:
+            with self.assertRaisesRegex(refresh_module.RefreshError, "unavailable or unapproved"):
+                refresh_module.refresh(self.output)
+        download_mock.assert_not_called()
+        self.assertFalse((self.output / "current.json").exists())
+
+    def test_registry_without_owner_approval_fails_before_download(self):
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        del config["approval"]
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+        with patch.object(refresh_module, "download") as download_mock:
+            with self.assertRaises(refresh_module.RefreshError):
+                refresh_module.refresh(self.output)
+        download_mock.assert_not_called()
+        self.assertFalse((self.output / "current.json").exists())
 
     def test_required_source_failure_preserves_current_snapshot(self):
         with self.mock_downloads():
@@ -183,6 +311,21 @@ class RefreshTests(unittest.TestCase):
             refresh_module._validate_gtfs(b"not a zip", source)
         with self.assertRaises(refresh_module.RefreshError):
             refresh_module._validate_gtfs(static_feed(unsafe_path="../outside.txt"), source)
+
+    def test_invalid_required_gtfs_columns_are_rejected(self):
+        bad_feed = static_feed(table_overrides={"routes.txt": "id\nexample\n"})
+        with self.assertRaisesRegex(refresh_module.RefreshError, "Missing required columns"):
+            refresh_module._validate_gtfs(bad_feed, self.sources[0])
+
+    def test_invalid_service_date_is_rejected(self):
+        bad_feed = static_feed(table_overrides={
+            "calendar.txt": (
+                "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,"
+                "start_date,end_date\ns,1,1,1,1,1,0,0,20260230,20261231\n"
+            )
+        })
+        with self.assertRaisesRegex(refresh_module.RefreshError, "Invalid start_date"):
+            refresh_module._validate_gtfs(bad_feed, self.sources[0])
 
     def test_rejects_non_allowlisted_urls(self):
         for url in (
@@ -226,6 +369,8 @@ class RefreshTests(unittest.TestCase):
             record["url"].startswith("https://mkuran.pl/gtfs/")
             for record in records
         ))
+        self.assertTrue(all(record["approved_for_download"] for record in records))
+        self.assertEqual(config["approval"]["status"], "approved")
 
 
 if __name__ == "__main__":

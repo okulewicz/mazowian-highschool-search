@@ -33,4 +33,5 @@ checks when more component code is introduced.
 
 [Copilot setup](.github/workflows/copilot-setup-steps.yml) checks out the
 repository without installing speculative application dependencies. There are
-currently no application lint, build, test, or run commands.
+no application lint or build commands; the transport-data refresh command and
+its fixture-test command are documented in its component brief.

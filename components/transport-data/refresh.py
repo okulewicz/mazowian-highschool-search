@@ -38,6 +38,13 @@ GTFS_REQUIRED_FILES = {
     "trips.txt",
     "stop_times.txt",
 }
+GTFS_REQUIRED_COLUMNS = {
+    "agency.txt": {"agency_name", "agency_url", "agency_timezone"},
+    "routes.txt": {"route_id", "route_type"},
+    "stops.txt": {"stop_id", "stop_name"},
+    "trips.txt": {"route_id", "service_id", "trip_id"},
+    "stop_times.txt": {"trip_id", "stop_id", "stop_sequence"},
+}
 
 
 class RefreshError(Exception):
@@ -169,8 +176,68 @@ def _validate_gtfs(data: bytes, source: dict) -> tuple[str, str, str | None]:
         if not GTFS_REQUIRED_FILES.issubset(names):
             missing = sorted(GTFS_REQUIRED_FILES - names)
             raise RefreshError(f"Missing GTFS files for {source['id']}: {', '.join(missing)}")
-        if archive.testzip() is not None:
+        try:
+            corrupt_member = archive.testzip()
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
+            raise RefreshError(f"Corrupt GTFS ZIP for {source['id']}") from exc
+        if corrupt_member is not None:
             raise RefreshError(f"Corrupt member in GTFS ZIP for {source['id']}")
+
+        for filename, required_columns in GTFS_REQUIRED_COLUMNS.items():
+            member = next(member for member in members if member.filename == filename)
+            if member.file_size > MAX_METADATA_FILE_BYTES and filename != "stop_times.txt":
+                raise RefreshError(f"{filename} too large in {source['id']}")
+            try:
+                with archive.open(member) as binary:
+                    text = io.TextIOWrapper(binary, encoding="utf-8-sig", newline="")
+                    reader = csv.DictReader(text, strict=True)
+                    headers = reader.fieldnames or []
+                    if len(headers) != len(set(headers)):
+                        raise RefreshError(f"Duplicate CSV header in {filename} for {source['id']}")
+                    if not required_columns.issubset(headers):
+                        missing = sorted(required_columns - set(headers))
+                        raise RefreshError(
+                            f"Missing required columns in {filename} for {source['id']}: "
+                            f"{', '.join(missing)}"
+                        )
+                    if filename == "routes.txt" and not {
+                        "route_short_name", "route_long_name"
+                    }.intersection(headers):
+                        raise RefreshError(
+                            f"routes.txt requires a route name column for {source['id']}"
+                        )
+                    found_row = False
+                    for row in reader:
+                        found_row = True
+                        if None in row or any(value is None for value in row.values()):
+                            raise RefreshError(
+                                f"Malformed CSV row in {filename} for {source['id']}"
+                            )
+                        for column in required_columns:
+                            if not row.get(column, "").strip():
+                                raise RefreshError(
+                                    f"Empty {column} in {filename} for {source['id']}"
+                                )
+                        if filename == "routes.txt" and not (
+                            row.get("route_short_name", "").strip()
+                            or row.get("route_long_name", "").strip()
+                        ):
+                            raise RefreshError(
+                                f"Route has no name in {source['id']}"
+                            )
+                        if filename == "stop_times.txt" and not (
+                            row.get("arrival_time", "").strip()
+                            or row.get("departure_time", "").strip()
+                        ) and row.get("timepoint", "1").strip() != "0":
+                            raise RefreshError(
+                                f"Stop time has neither arrival nor departure in {source['id']}"
+                            )
+                    if not found_row:
+                        raise RefreshError(f"Empty {filename} in {source['id']}")
+            except (UnicodeDecodeError, csv.Error) as exc:
+                raise RefreshError(
+                    f"Invalid CSV in {filename} for {source['id']}"
+                ) from exc
 
         attribution_text = None
         attribution_name = source.get("attribution_file")
@@ -194,33 +261,61 @@ def _validate_gtfs(data: bytes, source: dict) -> tuple[str, str, str | None]:
                 )
 
         dates = []
-        if "calendar.txt" in names:
-            calendar_member = next(
-                member for member in members
-                if member.filename == "calendar.txt"
-            )
-            if calendar_member.file_size > MAX_METADATA_FILE_BYTES:
-                raise RefreshError(f"calendar.txt too large in {source['id']}")
-            text = archive.read(calendar_member).decode("utf-8-sig")
-            for row in csv.DictReader(io.StringIO(text)):
-                for key in ("start_date", "end_date"):
-                    value = row.get(key, "")
-                    if len(value) == 8 and value.isdigit():
-                        datetime.strptime(value, "%Y%m%d")
+        date_columns = {
+            "calendar.txt": {"start_date", "end_date"},
+            "calendar_dates.txt": {"service_id", "date", "exception_type"},
+        }
+        for filename, required_columns in date_columns.items():
+            if filename not in names:
+                continue
+            member = next(member for member in members if member.filename == filename)
+            if member.file_size > MAX_METADATA_FILE_BYTES:
+                raise RefreshError(f"{filename} too large in {source['id']}")
+            try:
+                text = archive.read(member).decode("utf-8-sig")
+                reader = csv.DictReader(io.StringIO(text), strict=True)
+                headers = reader.fieldnames or []
+                if not required_columns.issubset(headers):
+                    raise RefreshError(
+                        f"Invalid service-date columns in {filename} for {source['id']}"
+                    )
+                found_row = False
+                for row in reader:
+                    found_row = True
+                    if filename == "calendar_dates.txt" and any(
+                        not (row.get(key, "") or "").strip()
+                        for key in ("service_id", "exception_type")
+                    ):
+                        raise RefreshError(
+                            f"Missing required service exception value in {source['id']}"
+                        )
+                    keys = (
+                        ("start_date", "end_date")
+                        if filename == "calendar.txt" else ("date",)
+                    )
+                    for key in keys:
+                        value = row.get(key, "") or ""
+                        if not value.isdigit() or len(value) != 8:
+                            raise RefreshError(
+                                f"Invalid {key} in {filename} for {source['id']}"
+                            )
+                        try:
+                            datetime.strptime(value, "%Y%m%d")
+                        except ValueError as exc:
+                            raise RefreshError(
+                                f"Invalid {key} in {filename} for {source['id']}"
+                            ) from exc
                         dates.append(value)
-        if "calendar_dates.txt" in names:
-            exception_member = next(
-                member for member in members
-                if member.filename == "calendar_dates.txt"
-            )
-            if exception_member.file_size > MAX_METADATA_FILE_BYTES:
-                raise RefreshError(f"calendar_dates.txt too large in {source['id']}")
-            text = archive.read(exception_member).decode("utf-8-sig")
-            for row in csv.DictReader(io.StringIO(text)):
-                value = row.get("date", "")
-                if len(value) == 8 and value.isdigit():
-                    datetime.strptime(value, "%Y%m%d")
-                    dates.append(value)
+                    if filename == "calendar.txt" and row["start_date"] > row["end_date"]:
+                        raise RefreshError(
+                            f"Invalid calendar date range in {source['id']}"
+                        )
+                if not found_row:
+                    raise RefreshError(f"Empty {filename} in {source['id']}")
+            except (UnicodeDecodeError, csv.Error) as exc:
+                raise RefreshError(
+                    f"Invalid service dates in {filename} for {source['id']}"
+                ) from exc
         if not dates:
             raise RefreshError(f"No service dates found in GTFS ZIP for {source['id']}")
         return min(dates), max(dates), attribution_text
@@ -269,16 +364,21 @@ def _source_record(source: dict, output: Path) -> dict:
         "operator": source["operator"],
         "kind": kind,
         "url": source["url"],
-        "retrieved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "geographic_coverage": source["geographic_coverage"],
         "license": source["license"],
         "required": source["required"],
+        "approved_for_download": source.get("approved_for_download", False),
         "status": "available",
     }
     if "limitations" in source:
         record["limitations"] = source["limitations"]
     if "upstream_readme" in source:
         record["upstream_readme"] = source["upstream_readme"]
+    if not source.get("approved_for_download"):
+        record["status"] = "not_approved"
+        return record
+    record["attempted_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    filename = None
     try:
         data = download(source["url"], limit)
         record["retrieved_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -325,6 +425,10 @@ def _source_record(source: dict, output: Path) -> dict:
                 if timestamp:
                     record["feed_header_timestamp"] = _utc_datetime(timestamp)
             stale_after = source.get("stale_after_seconds")
+            if stale_after is None:
+                raise RefreshError(
+                    f"Missing stale_after_seconds for realtime source {source['id']}"
+                )
             record["freshness"] = (
                 "unknown" if timestamp is None else
                 "stale" if time.time() - timestamp > stale_after else "fresh"
@@ -340,6 +444,20 @@ def _source_record(source: dict, output: Path) -> dict:
                 )
         return record
     except Exception as exc:
+        if filename is not None:
+            (output / filename).unlink(missing_ok=True)
+        for key in (
+            "file",
+            "sha256",
+            "size_bytes",
+            "feed_validity",
+            "attribution_text",
+            "feed_header_timestamp",
+            "freshness",
+            "stale_after_seconds",
+            "required_attribution",
+        ):
+            record.pop(key, None)
         if source["required"]:
             raise RefreshError(f"Required source {source['id']} failed: {exc}") from exc
         record.update({"status": "unavailable", "error": str(exc)})
@@ -349,18 +467,40 @@ def _source_record(source: dict, output: Path) -> dict:
 def refresh(output_dir: Path) -> Path:
     """Publish a complete static snapshot and return its directory."""
     config = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+    approval = config.get("approval", {})
+    if approval.get("status") != "approved" or not approval.get("approved_on"):
+        raise RefreshError("Source registry has no recorded owner approval")
     sources = config["sources"]
+    unapproved_required = [
+        source["id"]
+        for source in sources
+        if source.get("required") and not source.get("approved_for_download")
+    ]
+    if unapproved_required:
+        raise RefreshError(
+            "Required sources are not approved: " + ", ".join(unapproved_required)
+        )
     output_dir = Path(output_dir)
     snapshots = output_dir / "snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=snapshots))
-    retrieved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     try:
         records = [_source_record(source, staging) for source in sources]
+        unavailable_required = [
+            record["id"]
+            for record in records
+            if record["required"] and record["status"] != "available"
+        ]
+        if unavailable_required:
+            raise RefreshError(
+                "Required sources are unavailable or unapproved: "
+                + ", ".join(unavailable_required)
+            )
         manifest = {
             "schema_version": 1,
             "source_index_url": config["index_url"],
-            "retrieved_at": retrieved_at,
+            "source_approval": approval,
+            "retrieved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "sources": records,
         }
         manifest_path = staging / "manifest.json"
