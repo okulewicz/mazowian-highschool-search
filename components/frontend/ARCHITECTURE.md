@@ -14,6 +14,13 @@ No project backend, accounts, or server-side project storage.
 
 - Inputs: versioned discovery/details/ranking artifacts and the documented
   OTP v2.10 routing interface. Join catalogs on stable `school_id`.
+- Map tiles: read the versioned local OSM PMTiles artifact produced by
+  `transport-data` from `current/manifest.json` and `current/map.pmtiles`.
+  The manifest declares PMTiles v3/Mapbox Vector Tiles, zooms 5–14, source
+  checksum, renderer/configuration identity, and attribution. Consume with a
+  PMTiles-capable vector-tile renderer and a frontend-owned style; tile
+  hosting/URL configuration remains a deployment decision. Never fall back to
+  bulk requests to the public OSM tile service.
 - Project: `schema_version`, school/profile comparison entries, home point,
   comparison and travel preferences. Each entry references a `school_id` and
   profile/program identity (or unresolved raw profile text). Multiple profiles
@@ -47,6 +54,8 @@ No project backend, accounts, or server-side project storage.
 5. Add a static serving container, focused CI checks, and attribution. Disclose
    coordinate transmission to routing/map/geocoding services; never send whole
    projects or store home points in telemetry, server logs, or shared caches.
+   Show the linked OpenStreetMap contributor attribution visibly on the map;
+   preserve any source processing credit from tile metadata.
 
 ## Acceptance checks
 

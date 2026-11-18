@@ -1,8 +1,8 @@
-# Transport data refresh process
+# Transport data and map-tile processes
 
-Status: a standard-library GTFS refresh command is implemented for the
-mkuran.pl Warsaw, WKD, and Polish Trains feeds. OSM refresh, container
-packaging, and scheduling are not implemented.
+Status: a standard-library GTFS refresh command and local map-tile batch
+process are implemented. OSM snapshot downloading, production packaging, and
+scheduling remain unresolved.
 Read [the main architecture](../../ARCHITECTURE.md) first.
 
 ## Responsibility and boundary
@@ -87,18 +87,64 @@ after every required input validates; on any failure, remove staging data and
 leave the current snapshot unchanged. Keep PBFs and Snapshot/build artifacts
 out of version control.
 
+## Map-tile generation process
+
+Tile generation is a separate batch invocation within `transport-data`; it does
+not download data, build an OTP graph, or select a tile host. It consumes a
+local PBF and its source checksum, never the public OSM tile service.
+
+Run from the repository root after Docker is installed and the versioned local
+snapshot is available:
+
+```sh
+sha256sum /path/to/mazowieckie-latest.osm.pbf
+python3 components/transport-data/tiles/generate.py \
+  --input /path/to/mazowieckie-latest.osm.pbf \
+  --input-sha256 <verified-pbf-sha256> \
+  --source-url https://download.geofabrik.de/europe/poland/mazowieckie.html \
+  --retrieved-at 2026-01-01T00:00:00Z \
+  --output-root /path/to/map-tiles
+```
+
+The command runs Tilemaker v3.2.0 from its immutable container digest with
+network access disabled. The checked-in `config.json` and `process.lua` produce
+PMTiles v3 archives containing Mapbox Vector Tiles, zooms 5–14, and
+`place`, `transportation`, `waterway`, `water`, `landuse`, and `building`
+layers. The tile contents are renderer-neutral; the frontend supplies its map
+style and can consume the PMTiles archive through a PMTiles-capable vector-tile
+renderer.
+
+Artifacts are written to `versions/<build-id>/map.pmtiles` with a
+`manifest.json` recording source URL/retrieval time, input checksum, renderer
+digest, configuration checksums, zooms, attribution, and output checksum.
+`current` is an atomically replaced relative symlink to a complete version.
+Failed generation leaves the previous pointer unchanged. Build IDs are derived
+from the input, configuration, and renderer identity; an existing matching
+version is checksum-verified before it can become current. Keep the output
+directory out of Git.
+
+The archive metadata carries linked OpenStreetMap contributor attribution and
+Geofabrik processing credit; the frontend must also show attribution visibly
+whenever the map is displayed. Record the Geofabrik source URL in the manifest.
+Before any external tile/data publication, verify the current ODbL 1.0 and
+Geofabrik attribution and redistribution terms for the actual output. This
+process does not decide where/how the artifact is hosted.
+
 ## Implementation round
 
-1. Confirm permitted use/redistribution and refresh cadence with owner.
-2. Implement OSM ingestion and validation for OTP v2.10 using the approved
-   Geofabrik source, without committing PBFs or snapshots.
-3. Add source-specific freshness reporting and retention policy after owner
-   decisions.
+1. Confirm source usage/redistribution, coverage, and refresh cadence with the
+   owner.
+2. Implement Geofabrik OSM ingestion and manifest validation for OTP v2.10;
+   do not commit PBFs or snapshots.
+3. Package and schedule only after deployment and resource decisions.
+4. Run map-tile generation independently against a validated local PBF
+   snapshot; never trigger it as part of OTP graph construction.
 
 ## Acceptance checks
 
-Use tiny synthetic/local fixtures for source metadata and attribution, stale or
-unavailable realtime data, corrupt archives, unsafe paths/URLs, expired feeds,
-and partial failure. Verify atomic publication and last-known-good retention.
-A refresh must not automatically interrupt the running routing engine. CI must
-not download the live feeds.
+Test source metadata/attribution, stale or unavailable realtime data, corrupt
+archives, unsafe paths/URLs, expired feeds, and partial failure with local
+fixtures. Verify atomic snapshot publication and last-known-good retention.
+Test tile checksum validation, metadata, output, atomic pointer replacement,
+and failed-generation retention. CI must not download live feeds or regional
+extracts.

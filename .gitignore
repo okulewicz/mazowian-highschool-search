@@ -224,3 +224,6 @@ __marimo__/
 
 # Local transport snapshots and generated OTP graphs
 .data/
+
+# Generated regional map tiles
+components/transport-data/tiles/output/
