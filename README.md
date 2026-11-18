@@ -3,8 +3,9 @@ A bunch of components making a POC for selecting perfect high school
 
 ## Scaffold status
 
-This repository currently contains architecture and implementation briefs, not
-working services. No downloads, scraping, routing, or frontend are implemented.
+This repository primarily contains architecture and implementation briefs.
+The transport-data component has a fixture-tested GTFS refresh command; OSM
+refresh, scraping, routing, and the frontend are not implemented.
 
 - [Architecture and owner decisions](ARCHITECTURE.md)
 - [Copilot implementation guidance](.github/copilot-instructions.md)
@@ -26,8 +27,9 @@ Its `ARCHITECTURE.md` is the brief for a subsequent implementation round.
 ## Automation
 
 [CI](.github/workflows/ci.yml) checks required scaffold files and committed
-whitespace on pull requests and pushes. It does not yet run application tests
-or build images. Add component-specific checks when their code is introduced.
+whitespace on pull requests and pushes. It also runs fixture-only transport-data
+tests; it does not download live feeds or build images. Add component-specific
+checks when more component code is introduced.
 
 [Copilot setup](.github/workflows/copilot-setup-steps.yml) checks out the
 repository without installing speculative application dependencies. There are

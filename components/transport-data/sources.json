@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "index_url": "https://mkuran.pl/gtfs/",
+  "sources": [
+    {
+      "id": "ztm-warsaw-static",
+      "operator": "Warszawski Transport Publiczny (ZTM Warszawa)",
+      "kind": "static_gtfs",
+      "url": "https://mkuran.pl/gtfs/warsaw.zip",
+      "geographic_coverage": "Warsaw metropolitan area, as published upstream",
+      "required": true,
+      "license": [
+        "ZTM Warszawa Data Usage Terms (Polish)",
+        "ODbL (bus shapes)"
+      ],
+      "attribution_file": "attributions.txt",
+      "required_attributions": [
+        "ZTM Warszawa",
+        "Mikołaj Kuranowski",
+        "OpenStreetMap contributors"
+      ]
+    },
+    {
+      "id": "ztm-warsaw-alerts",
+      "operator": "Warszawski Transport Publiczny (ZTM Warszawa)",
+      "kind": "gtfs_realtime_alerts",
+      "url": "https://mkuran.pl/gtfs/warsaw/alerts.pb",
+      "geographic_coverage": "Warsaw metropolitan area, as published upstream",
+      "required": false,
+      "license": [
+        "CC0 1.0"
+      ],
+      "stale_after_seconds": 900
+    },
+    {
+      "id": "ztm-warsaw-vehicles",
+      "operator": "Miasto Stołeczne Warszawa",
+      "kind": "gtfs_realtime_vehicle_positions",
+      "url": "https://mkuran.pl/gtfs/warsaw/vehicles.pb",
+      "geographic_coverage": "Warsaw metropolitan area, as published upstream",
+      "required": false,
+      "license": [
+        "Warsaw Open Data Project Usage Terms (Polish)"
+      ],
+      "stale_after_seconds": 900,
+      "attribution_template": "Miasto Stołeczne Warszawa. Download date: {feed_header_date} (from the GTFS-Realtime FeedHeader timestamp). http://api.um.warszawa.pl",
+      "limitations": [
+        "Provided by Warsaw City Hall, not ZTM Warszawa.",
+        "Some realtime trip_id values may not match the static feed."
+      ]
+    },
+    {
+      "id": "wkd-static",
+      "operator": "Warszawska Kolej Dojazdowa (WKD)",
+      "kind": "static_gtfs",
+      "url": "https://mkuran.pl/gtfs/wkd.zip",
+      "geographic_coverage": "Warsaw metropolitan area, as published upstream",
+      "required": true,
+      "license": [
+        "CC0 1.0"
+      ]
+    },
+    {
+      "id": "wkd-trip-updates",
+      "operator": "Warszawska Kolej Dojazdowa (WKD)",
+      "kind": "gtfs_realtime_trip_updates",
+      "url": "https://mkuran.pl/gtfs/wkd.pb",
+      "geographic_coverage": "Warsaw metropolitan area, as published upstream",
+      "required": false,
+      "license": [
+        "CC0 1.0"
+      ],
+      "stale_after_seconds": 3600
+    },
+    {
+      "id": "polish-trains-static",
+      "operator": "Polish Trains (schedules provided by PKP PLK)",
+      "kind": "static_gtfs",
+      "url": "https://mkuran.pl/gtfs/polish_trains.zip",
+      "geographic_coverage": "Poland; includes Mazowieckie but is not limited to it",
+      "required": true,
+      "license": [
+        "PKP PLK public sector data usage terms (Polish)",
+        "Koleje Mazowieckie public sector data usage terms (Polish)"
+      ],
+      "upstream_readme": "https://github.com/MKuranowski/PolishTrainsGTFS/blob/main/README.md",
+      "attribution_file": "attributions.txt",
+      "required_attributions": [
+        "PKP Polskie Linie Kolejowe S.A.",
+        "Koleje Mazowieckie",
+        "Mikołaj Kuranowski"
+      ],
+      "limitations": [
+        "The feed includes Polish trains and is not limited to Mazowieckie.",
+        "Stop and shape data is collected manually; timed connections and carriage transfers are not available.",
+        "Platform and track data is absent for some disembarking-only stops.",
+        "International routes, replacement buses, and some operator assignments may contain errors."
+      ]
+    },
+    {
+      "id": "polish-trains-updates-json",
+      "operator": "Polish Trains (schedules provided by PKP PLK)",
+      "kind": "realtime_trip_updates_json",
+      "url": "https://mkuran.pl/gtfs/polish_trains/updates.json",
+      "geographic_coverage": "Poland; includes Mazowieckie but is not limited to it",
+      "required": false,
+      "license": [
+        "CC BY 4.0",
+        "PKP PLK public sector data usage terms (Polish)"
+      ],
+      "upstream_readme": "https://github.com/MKuranowski/PolishTrainsGTFS/blob/main/README.md",
+      "stale_after_seconds": 3600,
+      "limitations": [
+        "The endpoint can be unstable and may remain stale for over an hour once or twice a day.",
+        "Prefer this JSON feed to GTFS-Realtime where its additional data is useful.",
+        "Static trip_id values are not particularly stable; use agency_id + number + start_date as a fallback matching strategy.",
+        "Platform and track in updates are copied from static data and are not live assignments.",
+        "Disruption information may be delayed; alerts are work in progress."
+      ]
+    },
+    {
+      "id": "polish-trains-updates-gtfs-rt",
+      "operator": "Polish Trains (schedules provided by PKP PLK)",
+      "kind": "gtfs_realtime_trip_updates",
+      "url": "https://mkuran.pl/gtfs/polish_trains/updates.pb",
+      "geographic_coverage": "Poland; includes Mazowieckie but is not limited to it",
+      "required": false,
+      "license": [
+        "CC BY 4.0",
+        "PKP PLK public sector data usage terms (Polish)"
+      ],
+      "upstream_readme": "https://github.com/MKuranowski/PolishTrainsGTFS/blob/main/README.md",
+      "stale_after_seconds": 3600,
+      "limitations": [
+        "The endpoint can be unstable and may remain stale for over an hour once or twice a day.",
+        "Static trip_id values are not particularly stable; use agency_id + number + start_date as a fallback matching strategy.",
+        "Disruption information may be delayed; alerts are work in progress."
+      ]
+    }
+  ]
+}
