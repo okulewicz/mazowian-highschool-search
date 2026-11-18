@@ -61,12 +61,41 @@ python3 -m unittest discover -s components/transport-data/tests -v
 The command currently publishes GTFS only; OSM data is not included in these
 snapshots until its source, permission, and validation are implemented.
 
+## Approved OSM source
+
+Use the official Geofabrik [Mazowieckie extract page](https://download.geofabrik.de/europe/poland/mazowieckie.html)
+and its [latest PBF](https://download.geofabrik.de/europe/poland/mazowieckie-latest.osm.pbf).
+Coverage is Geofabrik's Mazowieckie regional extract; do not imply that it
+includes neighboring regions or all cross-border travel.
+
+Record the page URL and the direct PBF URL in each OSM manifest entry, along
+with retrieval time (UTC), upstream data timestamp reported by Geofabrik (when
+available), SHA-256, downloaded byte size, coverage, and schema version. The
+upstream timestamp and size change over time and must be captured on refresh,
+not checked in as fixed values. Treat the extract as OpenStreetMap data under
+[ODbL 1.0](https://www.openstreetmap.org/copyright). Preserve credit to
+OpenStreetMap contributors and Geofabrik's processing attribution (the
+Geofabrik download server identifies data as processed by Geofabrik GmbH and
+created by OpenStreetMap contributors). Before enabling external
+redistribution, verify and satisfy ODbL attribution/share-alike requirements
+and Geofabrik's applicable attribution terms.
+
+Stream downloads to a size-limited temporary file with bounded timeouts and
+retries. Validate the response, PBF readability, and checksum before placing
+it in a new immutable snapshot. Publish by atomic rename/pointer update only
+after every required input validates; on any failure, remove staging data and
+leave the current snapshot unchanged. Keep PBFs and snapshot/build artifacts
+out of version control.
+
 ## Implementation round
 
-1. Implement bounded conditional requests and improved freshness policies where
+1. Confirm provider usage, redistribution, coverage, and refresh cadence with
+   the owner.
+2. Implement bounded conditional requests and improved freshness policies where
    the upstream feeds support them.
-2. Implement OSM ingestion and validation for OTP v2.10.
-3. Add container packaging, documented scheduling, and snapshot retention
+3. Implement OSM ingestion and validation for OTP v2.10 using the source above,
+   without committing PBFs or snapshots.
+4. Add container packaging, documented scheduling, and snapshot retention
    behavior.
 
 ## Acceptance checks
