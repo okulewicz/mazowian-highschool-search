@@ -9,6 +9,9 @@ All notable changes to this project are documented here, following
 
 - Initial architecture and implementation briefs for the six project
   components.
+- A fixture-tested GTFS refresh command and candidate source registry for
+  Warsaw, WKD, and Polish Trains static and realtime feeds. Feed downloads and
+  snapshot publication remain disabled pending explicit owner approval.
 
 ### Changed
 
