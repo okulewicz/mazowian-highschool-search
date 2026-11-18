@@ -14,11 +14,13 @@ import urllib.request
 import uuid
 import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 MAX_GTFS_BYTES = 500 * 1024 * 1024
+MAX_GTFS_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 MAX_OSM_BYTES = 2 * 1024 * 1024 * 1024
 TIMEOUT_SECONDS = 30
+DOWNLOAD_ATTEMPTS = 3
 ALLOWED_HOSTS = {"mkuran.pl", "download.geofabrik.de"}
 REQUIRED_GTFS_FILES = {"agency.txt", "stops.txt", "routes.txt", "trips.txt", "stop_times.txt"}
 
@@ -59,15 +61,35 @@ def _download(url, destination, maximum):
     }
 
 
+def _download_with_retry(url, destination, maximum):
+    for attempt in range(DOWNLOAD_ATTEMPTS):
+        try:
+            return _download(url, destination, maximum)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt + 1 == DOWNLOAD_ATTEMPTS:
+                raise
+            time.sleep(2**attempt)
+
+
 def _validate_gtfs(path):
     with zipfile.ZipFile(path) as archive:
         names = set()
+        uncompressed_size = 0
         for info in archive.infolist():
-            member = Path(info.filename)
-            if member.is_absolute() or ".." in member.parts or info.is_dir():
-                if info.is_dir():
-                    continue
+            member = PurePosixPath(info.filename)
+            if member.is_absolute() or ".." in member.parts or "\\" in info.filename:
                 raise ValueError(f"Unsafe GTFS archive member: {info.filename}")
+            if info.is_dir():
+                continue
+            if len(member.parts) != 1:
+                continue
+            if info.file_size < 0:
+                raise ValueError(f"Invalid GTFS archive member size: {info.filename}")
+            uncompressed_size += info.file_size
+            if uncompressed_size > MAX_GTFS_UNCOMPRESSED_BYTES:
+                raise ValueError("GTFS archive expands beyond the validation size limit")
+            if member.name in names:
+                raise ValueError(f"Duplicate GTFS file: {member.name}")
             names.add(member.name)
         missing = REQUIRED_GTFS_FILES - names
         if missing:
@@ -82,6 +104,41 @@ def _validate_gtfs(path):
     return {"validation": "valid-gtfs-zip"}
 
 
+def _validate_sources_config(config):
+    if config.get("schema_version") != 1 or not config.get("gtfs"):
+        raise ValueError("Source config must contain schema_version 1 and at least one GTFS feed")
+    for source in [config["osm"], *config["gtfs"]]:
+        parsed = urllib.parse.urlparse(source["url"])
+        if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
+            raise ValueError(f"Source URL is not approved: {source['url']}")
+        if not all(source.get(key) for key in ("id", "license", "attribution")):
+            raise ValueError("Each source requires id, license, and attribution")
+
+
+def _record_validity(path):
+    dates = []
+    with zipfile.ZipFile(path) as archive:
+        for filename, date_columns in (("calendar.txt", ("start_date", "end_date")), ("calendar_dates.txt", ("date",))):
+            if filename not in archive.namelist():
+                continue
+            with archive.open(filename) as raw:
+                import io
+                import csv
+
+                reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
+                for row in reader:
+                    for column in date_columns:
+                        value = row.get(column, "")
+                        if value:
+                            try:
+                                dates.append(datetime.strptime(value, "%Y%m%d").date().isoformat())
+                            except ValueError as error:
+                                raise ValueError(f"Invalid GTFS service date in {filename}: {value}") from error
+    if dates:
+        return {"service_valid_from": min(dates), "service_valid_to": max(dates)}
+    return {"service_valid_from": None, "service_valid_to": None}
+
+
 def _validate_pbf(path):
     with path.open("rb") as source:
         header = source.read(64)
@@ -90,7 +147,7 @@ def _validate_pbf(path):
     return {"validation": "valid-osm-pbf-header"}
 
 
-def refresh(source_config, snapshot_root, downloader=_download):
+def refresh(source_config, snapshot_root, downloader=_download_with_retry):
     snapshot_root = Path(snapshot_root)
     snapshots = snapshot_root / "snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)
@@ -98,6 +155,7 @@ def refresh(source_config, snapshot_root, downloader=_download):
     sources_manifest = []
     try:
         config = json.loads(Path(source_config).read_text(encoding="utf-8"))
+        _validate_sources_config(config)
         osm = config["osm"]
         osm_path = staging / "mazowieckie.osm.pbf"
         osm_metadata = downloader(osm["url"], osm_path, MAX_OSM_BYTES)
@@ -110,6 +168,7 @@ def refresh(source_config, snapshot_root, downloader=_download):
             metadata = downloader(feed["url"], gtfs_path, MAX_GTFS_BYTES)
             metadata.update({"id": feed["id"], "kind": "static-gtfs", "license": feed["license"], "attribution": feed["attribution"]})
             metadata.update(_validate_gtfs(gtfs_path))
+            metadata.update(_record_validity(gtfs_path))
             sources_manifest.append(metadata)
 
         manifest = {

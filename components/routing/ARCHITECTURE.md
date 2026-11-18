@@ -1,6 +1,8 @@
 # OpenTripPlanner routing process
 
-Status: placeholder; no engine configuration, image, graph, or endpoint exists.
+Status: local OTP 2.10 graph build, smoke-test, activation, and serving process
+implemented. Mode-specific routing verification and production deployment are
+still outstanding.
 Read [the main architecture](../../ARCHITECTURE.md) first.
 
 ## Responsibility and boundary
@@ -12,10 +14,13 @@ projects. Do not introduce a second engine without owner approval.
 
 ## Inputs and outputs
 
-- Build inputs: a validated `transport-data` snapshot manifest and its GTFS/OSM
-  files, plus version-controlled OTP build/router configuration.
+- Build inputs: `.data/transport/current` with a valid snapshot manifest and
+  checksummed GTFS/OSM files. The host command runs the build inside the pinned
+  OTP container.
 - Build output: a versioned graph associated with the exact input checksums,
-  OTP version, and configuration. Activate only after a successful smoke test.
+  OTP image digest, and recorded invocation/configuration checksum. The graph
+  is smoke-tested against the v2.10 GTFS GraphQL endpoint before atomically
+  updating `.data/routing/active`.
 - Query inputs: origin/destination coordinates, departure or arrival time,
   timezone, and supported mode/accessibility preferences.
 - Query outputs: duration, legs/modes, transfers, geometry, and clear no-route
@@ -28,10 +33,21 @@ projects. Do not introduce a second engine without owner approval.
 2. Prove walking, bike, transit, and mixed-mode support with a small graph.
    Explicitly verify car-only versus car/transit support. Escalate unsupported
    product requirements to the owner rather than treating them as implemented.
-3. Add reproducible graph-build and serve commands, resource guidance,
-   health/readiness checks, and safe graph replacement/rollback.
-4. Configure frontend access, bounded queries, and logging without coordinates
-   or home locations. Document GTFS validity and Europe/Warsaw time handling.
+3. `python3 components/routing/build_graph.py .data` verifies source checksums,
+   builds in a temporary directory, smoke-tests, and activates only on success.
+   `docker compose up otp` serves the active graph separately on port 8080.
+4. The GTFS GraphQL endpoint is `/otp/gtfs/v1`. The build smoke query only
+   proves endpoint readiness; it does not yet prove route modes or the
+   frontend query contract.
+
+The pinned image is
+`opentripplanner/opentripplanner:2.10.0@sha256:8d54e5c589186707ee365417f2202dc878c451fa3001b8edff07019531100933`.
+The smoke check is not a claim that car-only, park-and-ride, or other mixed
+modes are verified. No custom routing proxy or coordinate-redacting access-log
+layer exists yet; do not enable request-body/debug logging or expose the
+development endpoint publicly. Query bounds, Europe/Warsaw edge cases, no-route
+semantics, stale realtime, and unavailable-graph responses still need focused
+fixture verification.
 
 ## Acceptance checks
 

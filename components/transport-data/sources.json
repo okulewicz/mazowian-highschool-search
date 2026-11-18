@@ -10,7 +10,7 @@
     {
       "id": "warsaw",
       "url": "https://mkuran.pl/gtfs/warsaw.zip",
-      "license": "See source terms listed at https://mkuran.pl/gtfs/",
+      "license": "ZTM Warszawa Data Usage Terms; bus shapes under ODbL-1.0",
       "attribution": "ZTM Warszawa; Mikołaj Kuranowski; OpenStreetMap contributors"
     },
     {
@@ -22,8 +22,8 @@
     {
       "id": "polish-trains",
       "url": "https://mkuran.pl/gtfs/polish_trains.zip",
-      "license": "See source terms listed at https://mkuran.pl/gtfs/",
-      "attribution": "PKP PLK; Koleje Mazowieckie; Mikołaj Kuranowski"
+      "license": "PKP PLK and Koleje Mazowieckie public-sector data usage terms",
+      "attribution": "PKP PLK; Koleje Mazowieckie"
     }
   ]
 }

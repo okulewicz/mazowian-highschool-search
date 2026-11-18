@@ -55,6 +55,7 @@ class RefreshTests(unittest.TestCase):
             root = Path(temporary)
             config = root / "sources.json"
             config.write_text(json.dumps({
+                "schema_version": 1,
                 "osm": {"id": "osm", "url": "https://download.geofabrik.de/test.pbf", "license": "ODbL", "attribution": "OSM"},
                 "gtfs": [{"id": "fixture", "url": "https://mkuran.pl/fixture.zip", "license": "CC0", "attribution": "fixture"}],
             }))

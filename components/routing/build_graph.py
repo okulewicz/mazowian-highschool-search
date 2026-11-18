@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -61,14 +62,25 @@ def build(snapshot_root, routing_root):
     snapshot_root = Path(snapshot_root).resolve()
     routing_root = Path(routing_root).resolve()
     current = snapshot_root / "current"
-    manifest_path = current / "manifest.json"
-    if not current.is_dir() or not manifest_path.is_file():
+    if not current.is_dir():
         raise ValueError(f"Missing validated transport snapshot: {current}")
+    current = current.resolve(strict=True)
+    manifest_path = current / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError(f"Missing transport snapshot manifest: {manifest_path}")
     snapshot_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if snapshot_manifest.get("schema_version") != 1 or len(snapshot_manifest.get("sources", [])) < 2:
         raise ValueError("Transport snapshot manifest is invalid or incomplete")
     for source in snapshot_manifest["sources"]:
-        input_path = current / ("mazowieckie.osm.pbf" if source["kind"] == "osm" else f"{source['id']}.gtfs.zip")
+        if source.get("kind") == "osm":
+            filename = "mazowieckie.osm.pbf"
+        elif source.get("kind") == "static-gtfs" and re.fullmatch(r"[a-z0-9][a-z0-9-]*", source.get("id", "")):
+            filename = f"{source['id']}.gtfs.zip"
+        else:
+            raise ValueError(f"Unsupported transport source in manifest: {source.get('id')}")
+        input_path = current / filename
+        if input_path.is_symlink() or input_path.resolve().parent != current:
+            raise ValueError(f"Snapshot input is not a regular file: {filename}")
         if not input_path.is_file() or sha256_file(input_path) != source["sha256"]:
             raise ValueError(f"Snapshot input failed checksum verification: {input_path.name}")
 
@@ -81,7 +93,7 @@ def build(snapshot_root, routing_root):
             filename = "mazowieckie.osm.pbf" if source["kind"] == "osm" else f"{source['id']}.gtfs.zip"
             shutil.copyfile(current / filename, staging / filename)
         build_config = {"otp_image": OTP_IMAGE, "command": ["--build", "--save"], "otp_version": "2.10.0"}
-        (staging / "build-config.json").write_text(json.dumps(build_config, indent=2) + "\n")
+        (staging / "pipeline-build-config.json").write_text(json.dumps(build_config, indent=2) + "\n")
         subprocess.run(
             ["docker", "run", "--rm", "-v", f"{staging}:/var/opentripplanner",
              OTP_IMAGE, "--build", "--save", "/var/opentripplanner"],
@@ -96,7 +108,7 @@ def build(snapshot_root, routing_root):
             "built_at": datetime.now(timezone.utc).isoformat(),
             "otp_version": "2.10.0",
             "otp_image": OTP_IMAGE,
-            "build_configuration_sha256": sha256_file(staging / "build-config.json"),
+            "build_configuration_sha256": sha256_file(staging / "pipeline-build-config.json"),
             "transport_snapshot_id": snapshot_manifest["snapshot_id"],
             "inputs": [
                 {"id": source["id"], "sha256": source["sha256"]}
