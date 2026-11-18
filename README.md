@@ -3,9 +3,11 @@ A bunch of components making a POC for selecting perfect high school
 
 ## Implementation status
 
-The `transport-data` refresh container and OTP v2.10 graph build/serve process
-are implemented. Other component briefs remain placeholders; there is no
-school-data ingestion or frontend yet.
+The `transport-data` GTFS refresh and OTP v2.10 graph build/serve processes
+have fixture-tested local implementations. Source downloads remain disabled
+until the feed registry records owner approval. OSM refresh is documented but
+not yet integrated with the GTFS refresh command. Other component briefs
+remain placeholders; there is no school-data ingestion or frontend yet.
 
 - [Architecture and owner decisions](ARCHITECTURE.md)
 - [Copilot implementation guidance](.github/copilot-instructions.md)
@@ -27,8 +29,9 @@ Each directory represents a component or designated process. Its
 ## Automation
 
 [CI](.github/workflows/ci.yml) checks required scaffold files and committed
-whitespace on pull requests and pushes. Transport-data fixture tests run
-offline; CI does not download regional feeds or build a regional OTP graph.
+whitespace on pull requests and pushes and runs offline transport-data fixture
+tests; CI does not download live feeds or regional extracts or build a regional
+OTP graph.
 
 [Copilot setup](.github/workflows/copilot-setup-steps.yml) checks out the
 repository without installing speculative application dependencies.
@@ -70,9 +73,14 @@ and realtime behavior have not been verified by this fixture. OTP receives
 request coordinates; keep routing requests out of logs. Coverage approval,
 refresh cadence, public hosting, and scheduling remain owner decisions.
 
-Focused offline checks:
+Focused offline transport-data checks:
 
 ```sh
-python3 -m unittest discover -s components/transport-data -p 'test_*.py'
+python3 -m unittest discover -s components/transport-data/tests -v
+```
+
+The routing implementation has focused tests too:
+
+```sh
 python3 -m unittest discover -s components/routing -p 'test_*.py'
 ```

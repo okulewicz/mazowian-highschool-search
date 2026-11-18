@@ -1,7 +1,8 @@
 # Transport data refresh process
 
-Status: local refresh container implemented; production scheduling and source
-approval for redistribution remain unresolved.
+Status: a standard-library GTFS refresh command is implemented for the
+mkuran.pl Warsaw, WKD, and Polish Trains feeds. OSM refresh, container
+packaging, and scheduling are not implemented.
 Read [the main architecture](../../ARCHITECTURE.md) first.
 
 ## Responsibility and boundary
@@ -12,32 +13,53 @@ routing engine. It does not scrape school websites or build the OTP graph.
 
 ## Inputs and outputs
 
-- Inputs: static GTFS URLs in `sources.json` from the Kuran index and the
-  Geofabrik Mazowieckie OSM PBF URL. Refresh is an explicit Docker Compose job.
-- Outputs: immutable snapshot directories containing GTFS ZIPs, OSM PBF data,
-  and a versioned manifest consumed by `routing`.
-- Manifest: source and final URLs, retrieval timestamps, checksums, file sizes,
-  GTFS service-date bounds, license, attribution, and validation status. The
-  manifest schema does not yet include Geofabrik's upstream data timestamp or
-  explicit coverage metadata. The input list covers static schedules only;
-  realtime endpoints are separate and are not downloaded.
-- The process checks HTTPS redirect hosts, applies timeouts and limited retry,
-  bounds download and archive expansion sizes, validates ZIP contents and the
-  PBF header, and publishes a `current` symlink only after all sources validate.
-  A failed or partial refresh retains the previous snapshot.
+- Inputs: the candidate source registry in `sources.json`. It lists Warsaw,
+  WKD, and Polish Trains feeds, but owner approval for retrieval and snapshot
+  publication is still pending. The Polish Trains feed covers Poland and is not
+  limited to Mazowieckie. The registry does not resolve the main architecture's
+  broader coverage question.
+- Outputs: immutable snapshot directories under the configured output path,
+  retaining each downloaded file separately with a versioned `manifest.json`.
+  `current.json` points to the latest successfully published snapshot.
+- The manifest records source URLs, per-source retrieval timestamps,
+  SHA-256 checksums, byte sizes, static feed service-date ranges, realtime
+  header timestamps/freshness, source terms, geographic coverage, and required
+  attribution. The Warsaw static feed's upstream `attributions.txt` is retained
+  in the raw ZIP, copied into the snapshot, and included verbatim in the
+  manifest. Vehicle-position attribution uses the realtime `FeedHeader`
+  timestamp and identifies Miasto Stołeczne Warszawa and
+  `http://api.um.warszawa.pl`.
+- Static feeds are required for publication; realtime feeds are optional.
+  An unavailable or stale realtime file is recorded as such and does not
+  invalidate valid static feeds. Static and realtime files remain distinct.
+  The vehicle-position manifest notes that some `trip_id` values do not match
+  static GTFS. Polish Trains realtime freshness is not inferred from retrieval
+  time; stale or unknown source timestamps are surfaced.
+- Redirects are restricted to HTTPS on `mkuran.pl`. Downloads have time,
+  retry, and size bounds. Static archives are checked for required GTFS files,
+  service dates, corruption, and unsafe member paths without extracting them.
+- Publish `current.json` atomically only after all required static inputs
+  validate. Failed refreshes leave the previous pointer and snapshot intact.
+  Snapshots are retained; cleanup/retention scheduling is not implemented.
+- `sources.json` records the candidate feed inventory and terms. All sources
+  are disabled pending explicit owner approval; the refresh fails closed until
+  the registry records approval and each downloaded source is individually
+  approved. Confirm terms and redistribution permission before enabling feeds.
 
-Run locally with:
+Run a refresh with:
 
 ```sh
-docker compose --profile jobs build transport-data
-docker compose --profile jobs run --rm transport-data
+python3 components/transport-data/refresh.py --output /path/to/transport-data
 ```
 
-Snapshots are written to ignored `.data/transport/`. The command does not build
-or activate an OTP graph. Source terms and attribution are recorded in
-`sources.json`; review the upstream terms before redistributing snapshots.
-There is no configured staleness threshold because refresh cadence is still an
-owner decision. Feed service-date bounds are recorded to expose expired feeds.
+Run focused, fixture-only tests with:
+
+```sh
+python3 -m unittest discover -s components/transport-data/tests -v
+```
+
+The command currently publishes GTFS only; OSM data is not included in these
+snapshots until its source, permission, and validation are implemented.
 
 ## Approved OSM source
 
@@ -68,15 +90,15 @@ out of version control.
 ## Implementation round
 
 1. Confirm permitted use/redistribution and refresh cadence with owner.
-2. Extend manifest/source validation to record Geofabrik's upstream timestamp
-   and declared coverage; add fixture checks for redirect limits, corrupt or
-   oversized inputs, invalid service dates, and partial refreshes.
+2. Implement OSM ingestion and validation for OTP v2.10 using the approved
+   Geofabrik source, without committing PBFs or snapshots.
 3. Add source-specific freshness reporting and retention policy after owner
    decisions.
 
 ## Acceptance checks
 
-Use tiny synthetic/local fixtures for successful refresh, unchanged sources,
-timeouts, corrupt archives, unsafe paths/URLs, expired feeds, and partial
-failure. Verify atomic publication and last-known-good retention. A refresh
-must not automatically interrupt the running routing engine.
+Use tiny synthetic/local fixtures for source metadata and attribution, stale or
+unavailable realtime data, corrupt archives, unsafe paths/URLs, expired feeds,
+and partial failure. Verify atomic publication and last-known-good retention.
+A refresh must not automatically interrupt the running routing engine. CI must
+not download the live feeds.

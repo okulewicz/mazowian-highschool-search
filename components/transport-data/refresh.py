@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""Download and atomically publish validated static GTFS and OSM inputs."""
+"""Download approved GTFS sources and publish validated immutable snapshots."""
 
+from __future__ import annotations
+
+import argparse
+import csv
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -16,186 +21,520 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-MAX_GTFS_BYTES = 500 * 1024 * 1024
-MAX_GTFS_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
-MAX_OSM_BYTES = 2 * 1024 * 1024 * 1024
-TIMEOUT_SECONDS = 30
-DOWNLOAD_ATTEMPTS = 3
-ALLOWED_HOSTS = {"mkuran.pl", "download.geofabrik.de"}
-REQUIRED_GTFS_FILES = {"agency.txt", "stops.txt", "routes.txt", "trips.txt", "stop_times.txt"}
+COMPONENT_DIR = Path(__file__).resolve().parent
+SOURCES_FILE = COMPONENT_DIR / "sources.json"
+ALLOWED_HOST = "mkuran.pl"
+TIMEOUT_SECONDS = 20
+RETRIES = 2
+MAX_STATIC_BYTES = 512 * 1024 * 1024
+MAX_REALTIME_BYTES = 32 * 1024 * 1024
+MAX_ZIP_ENTRIES = 20_000
+MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_METADATA_FILE_BYTES = 64 * 1024 * 1024
+GTFS_REQUIRED_FILES = {
+    "agency.txt",
+    "routes.txt",
+    "stops.txt",
+    "trips.txt",
+    "stop_times.txt",
+}
+GTFS_REQUIRED_COLUMNS = {
+    "agency.txt": {"agency_name", "agency_url", "agency_timezone"},
+    "routes.txt": {"route_id", "route_type"},
+    "stops.txt": {"stop_id", "stop_name"},
+    "trips.txt": {"route_id", "service_id", "trip_id"},
+    "stop_times.txt": {"trip_id", "stop_id", "stop_sequence"},
+}
 
 
-class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, response, code, message, headers, new_url):
-        parsed = urllib.parse.urlparse(new_url)
-        if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
-            raise ValueError(f"Refusing redirect to unapproved URL: {new_url}")
-        return super().redirect_request(request, response, code, message, headers, new_url)
+class RefreshError(Exception):
+    """Raised when a required source or snapshot publication fails."""
 
 
-def _download(url, destination, maximum):
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
-        raise ValueError(f"Refusing unapproved source URL: {url}")
-    opener = urllib.request.build_opener(SafeRedirectHandler)
-    request = urllib.request.Request(url, headers={"User-Agent": "mazowian-highschool-search/transport-data"})
-    digest = hashlib.sha256()
-    size = 0
-    with opener.open(request, timeout=TIMEOUT_SECONDS) as response, destination.open("wb") as output:
-        final_url = response.geturl()
-        final = urllib.parse.urlparse(final_url)
-        if final.scheme != "https" or final.hostname not in ALLOWED_HOSTS:
-            raise ValueError(f"Refusing unapproved final URL: {final_url}")
-        while chunk := response.read(1024 * 1024):
-            size += len(chunk)
-            if size > maximum:
-                raise ValueError(f"Download exceeds {maximum} bytes")
-            output.write(chunk)
-            digest.update(chunk)
-    return {
-        "source_url": url,
-        "final_url": final_url,
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
-        "size_bytes": size,
-        "sha256": digest.hexdigest(),
-    }
+def _validate_url(url: str) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != ALLOWED_HOST
+        or parsed.username
+        or parsed.password
+        or parsed.port not in (None, 443)
+    ):
+        raise RefreshError(f"Refusing unapproved source URL: {url}")
 
 
-def _download_with_retry(url, destination, maximum):
-    for attempt in range(DOWNLOAD_ATTEMPTS):
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download(url: str, max_bytes: int) -> bytes:
+    """Fetch one allowlisted HTTPS URL with bounded retries, time, and size."""
+    _validate_url(url)
+    opener = urllib.request.build_opener(_SafeRedirect)
+    last_error = None
+    for attempt in range(RETRIES + 1):
         try:
-            return _download(url, destination, maximum)
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            if attempt + 1 == DOWNLOAD_ATTEMPTS:
-                raise
-            time.sleep(2**attempt)
+            body = bytearray()
+            with opener.open(url, timeout=TIMEOUT_SECONDS) as response:
+                while True:
+                    chunk = response.read(min(64 * 1024, max_bytes + 1 - len(body)))
+                    if not chunk:
+                        return bytes(body)
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        raise RefreshError(
+                            f"Source exceeds the {max_bytes}-byte limit: {url}"
+                        )
+        except RefreshError:
+            raise
+        except (OSError, urllib.error.URLError) as exc:
+            last_error = exc
+            if attempt < RETRIES:
+                time.sleep(2**attempt)
+    raise RefreshError(f"Download failed for {url}: {last_error}") from last_error
 
 
-def _validate_gtfs(path):
-    with zipfile.ZipFile(path) as archive:
-        names = set()
-        uncompressed_size = 0
-        for info in archive.infolist():
-            member = PurePosixPath(info.filename)
-            if member.is_absolute() or ".." in member.parts or "\\" in info.filename:
-                raise ValueError(f"Unsafe GTFS archive member: {info.filename}")
-            if info.is_dir():
-                continue
-            if len(member.parts) != 1:
-                continue
-            if info.file_size < 0:
-                raise ValueError(f"Invalid GTFS archive member size: {info.filename}")
-            uncompressed_size += info.file_size
-            if uncompressed_size > MAX_GTFS_UNCOMPRESSED_BYTES:
-                raise ValueError("GTFS archive expands beyond the validation size limit")
-            if member.name in names:
-                raise ValueError(f"Duplicate GTFS file: {member.name}")
-            names.add(member.name)
-        missing = REQUIRED_GTFS_FILES - names
-        if missing:
-            raise ValueError(f"GTFS archive is missing required files: {', '.join(sorted(missing))}")
-        if not ({"calendar.txt", "calendar_dates.txt"} & names):
-            raise ValueError("GTFS archive has no calendar.txt or calendar_dates.txt")
-        for info in archive.infolist():
-            if not info.is_dir():
-                with archive.open(info) as member:
-                    while member.read(1024 * 1024):
-                        pass
-    return {"validation": "valid-gtfs-zip"}
+def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
+    value = 0
+    shift = 0
+    while pos < len(data) and shift < 70:
+        byte = data[pos]
+        pos += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, pos
+        shift += 7
+    raise RefreshError("Malformed GTFS-Realtime protobuf varint")
 
 
-def _validate_sources_config(config):
-    if config.get("schema_version") != 1 or not config.get("gtfs"):
-        raise ValueError("Source config must contain schema_version 1 and at least one GTFS feed")
-    for source in [config["osm"], *config["gtfs"]]:
-        parsed = urllib.parse.urlparse(source["url"])
-        if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
-            raise ValueError(f"Source URL is not approved: {source['url']}")
-        if not all(source.get(key) for key in ("id", "license", "attribution")):
-            raise ValueError("Each source requires id, license, and attribution")
+def _protobuf_fields(data: bytes):
+    pos = 0
+    while pos < len(data):
+        tag, pos = _read_varint(data, pos)
+        field_number, wire_type = tag >> 3, tag & 7
+        if not field_number:
+            raise RefreshError("Malformed GTFS-Realtime protobuf field tag")
+        if wire_type == 0:
+            value, pos = _read_varint(data, pos)
+        elif wire_type == 1:
+            end = pos + 8
+            if end > len(data):
+                raise RefreshError("Truncated GTFS-Realtime protobuf field")
+            value, pos = data[pos:end], end
+        elif wire_type == 2:
+            length, pos = _read_varint(data, pos)
+            end = pos + length
+            if end > len(data):
+                raise RefreshError("Truncated GTFS-Realtime protobuf field")
+            value, pos = data[pos:end], end
+        elif wire_type == 5:
+            end = pos + 4
+            if end > len(data):
+                raise RefreshError("Truncated GTFS-Realtime protobuf field")
+            value, pos = data[pos:end], end
+        else:
+            raise RefreshError("Unsupported GTFS-Realtime protobuf wire type")
+        yield field_number, wire_type, value
 
 
-def _record_validity(path):
-    dates = []
-    with zipfile.ZipFile(path) as archive:
-        for filename, date_columns in (("calendar.txt", ("start_date", "end_date")), ("calendar_dates.txt", ("date",))):
-            if filename not in archive.namelist():
-                continue
-            with archive.open(filename) as raw:
-                import io
-                import csv
-
-                reader = csv.DictReader(io.TextIOWrapper(raw, encoding="utf-8-sig"))
-                for row in reader:
-                    for column in date_columns:
-                        value = row.get(column, "")
-                        if value:
-                            try:
-                                dates.append(datetime.strptime(value, "%Y%m%d").date().isoformat())
-                            except ValueError as error:
-                                raise ValueError(f"Invalid GTFS service date in {filename}: {value}") from error
-    if dates:
-        return {"service_valid_from": min(dates), "service_valid_to": max(dates)}
-    return {"service_valid_from": None, "service_valid_to": None}
+def feed_header_timestamp(data: bytes) -> int | None:
+    """Read FeedMessage.header.timestamp without decoding feed entities."""
+    for number, wire_type, header in _protobuf_fields(data):
+        if number == 1 and wire_type == 2:
+            for header_number, header_wire, value in _protobuf_fields(header):
+                if header_number == 3 and header_wire == 0:
+                    return value
+            return None
+    return None
 
 
-def _validate_pbf(path):
-    with path.open("rb") as source:
-        header = source.read(64)
-    if len(header) < 15 or b"OSMHeader" not in header:
-        raise ValueError("OSM input is not a readable PBF header")
-    return {"validation": "valid-osm-pbf-header"}
-
-
-def refresh(source_config, snapshot_root, downloader=_download_with_retry):
-    snapshot_root = Path(snapshot_root)
-    snapshots = snapshot_root / "snapshots"
-    snapshots.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".refresh-", dir=snapshots))
-    sources_manifest = []
+def _validate_gtfs(data: bytes, source: dict) -> tuple[str, str, str | None]:
     try:
-        config = json.loads(Path(source_config).read_text(encoding="utf-8"))
-        _validate_sources_config(config)
-        osm = config["osm"]
-        osm_path = staging / "mazowieckie.osm.pbf"
-        osm_metadata = downloader(osm["url"], osm_path, MAX_OSM_BYTES)
-        osm_metadata.update({"id": osm["id"], "kind": "osm", "license": osm["license"], "attribution": osm["attribution"]})
-        osm_metadata.update(_validate_pbf(osm_path))
-        sources_manifest.append(osm_metadata)
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise RefreshError(f"Invalid GTFS ZIP for {source['id']}") from exc
+    with archive:
+        members = archive.infolist()
+        if len(members) > MAX_ZIP_ENTRIES:
+            raise RefreshError(f"Too many files in GTFS ZIP for {source['id']}")
+        total_size = 0
+        names = set()
+        for member in members:
+            path = PurePosixPath(member.filename)
+            if path.is_absolute() or ".." in path.parts or "\\" in member.filename:
+                raise RefreshError(f"Unsafe path in GTFS ZIP for {source['id']}")
+            mode = member.external_attr >> 16
+            if mode and (mode & 0o170000) == 0o120000:
+                raise RefreshError(f"Symlink in GTFS ZIP for {source['id']}")
+            total_size += member.file_size
+            if total_size > MAX_UNCOMPRESSED_BYTES:
+                raise RefreshError(f"Uncompressed GTFS ZIP is too large for {source['id']}")
+            if not member.is_dir():
+                names.add(member.filename)
+        if not GTFS_REQUIRED_FILES.issubset(names):
+            missing = sorted(GTFS_REQUIRED_FILES - names)
+            raise RefreshError(f"Missing GTFS files for {source['id']}: {', '.join(missing)}")
+        try:
+            corrupt_member = archive.testzip()
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile) as exc:
+            raise RefreshError(f"Corrupt GTFS ZIP for {source['id']}") from exc
+        if corrupt_member is not None:
+            raise RefreshError(f"Corrupt member in GTFS ZIP for {source['id']}")
 
-        for feed in config["gtfs"]:
-            gtfs_path = staging / f"{feed['id']}.gtfs.zip"
-            metadata = downloader(feed["url"], gtfs_path, MAX_GTFS_BYTES)
-            metadata.update({"id": feed["id"], "kind": "static-gtfs", "license": feed["license"], "attribution": feed["attribution"]})
-            metadata.update(_validate_gtfs(gtfs_path))
-            metadata.update(_record_validity(gtfs_path))
-            sources_manifest.append(metadata)
+        for filename, required_columns in GTFS_REQUIRED_COLUMNS.items():
+            member = next(member for member in members if member.filename == filename)
+            if member.file_size > MAX_METADATA_FILE_BYTES and filename != "stop_times.txt":
+                raise RefreshError(f"{filename} too large in {source['id']}")
+            try:
+                with archive.open(member) as binary:
+                    text = io.TextIOWrapper(binary, encoding="utf-8-sig", newline="")
+                    reader = csv.DictReader(text, strict=True)
+                    headers = reader.fieldnames or []
+                    if len(headers) != len(set(headers)):
+                        raise RefreshError(f"Duplicate CSV header in {filename} for {source['id']}")
+                    if not required_columns.issubset(headers):
+                        missing = sorted(required_columns - set(headers))
+                        raise RefreshError(
+                            f"Missing required columns in {filename} for {source['id']}: "
+                            f"{', '.join(missing)}"
+                        )
+                    if filename == "routes.txt" and not {
+                        "route_short_name", "route_long_name"
+                    }.intersection(headers):
+                        raise RefreshError(
+                            f"routes.txt requires a route name column for {source['id']}"
+                        )
+                    found_row = False
+                    for row in reader:
+                        found_row = True
+                        if None in row or any(value is None for value in row.values()):
+                            raise RefreshError(
+                                f"Malformed CSV row in {filename} for {source['id']}"
+                            )
+                        for column in required_columns:
+                            if not row.get(column, "").strip():
+                                raise RefreshError(
+                                    f"Empty {column} in {filename} for {source['id']}"
+                                )
+                        if filename == "routes.txt" and not (
+                            row.get("route_short_name", "").strip()
+                            or row.get("route_long_name", "").strip()
+                        ):
+                            raise RefreshError(
+                                f"Route has no name in {source['id']}"
+                            )
+                        if filename == "stop_times.txt" and not (
+                            row.get("arrival_time", "").strip()
+                            or row.get("departure_time", "").strip()
+                        ) and row.get("timepoint", "1").strip() != "0":
+                            raise RefreshError(
+                                f"Stop time has neither arrival nor departure in {source['id']}"
+                            )
+                    if not found_row:
+                        raise RefreshError(f"Empty {filename} in {source['id']}")
+            except (UnicodeDecodeError, csv.Error) as exc:
+                raise RefreshError(
+                    f"Invalid CSV in {filename} for {source['id']}"
+                ) from exc
 
+        attribution_text = None
+        attribution_name = source.get("attribution_file")
+        if attribution_name:
+            matches = [
+                member for member in members
+                if member.filename == attribution_name
+            ]
+            if not matches:
+                raise RefreshError(f"Missing {attribution_name} in {source['id']}")
+            if matches[0].file_size > MAX_METADATA_FILE_BYTES:
+                raise RefreshError(f"Attribution file too large in {source['id']}")
+            attribution_text = archive.read(matches[0]).decode("utf-8-sig")
+            missing = [
+                credit for credit in source.get("required_attributions", [])
+                if credit.casefold() not in attribution_text.casefold()
+            ]
+            if missing:
+                raise RefreshError(
+                    f"Missing required attribution in {source['id']}: {', '.join(missing)}"
+                )
+
+        dates = []
+        date_columns = {
+            "calendar.txt": {"start_date", "end_date"},
+            "calendar_dates.txt": {"service_id", "date", "exception_type"},
+        }
+        for filename, required_columns in date_columns.items():
+            if filename not in names:
+                continue
+            member = next(member for member in members if member.filename == filename)
+            if member.file_size > MAX_METADATA_FILE_BYTES:
+                raise RefreshError(f"{filename} too large in {source['id']}")
+            try:
+                text = archive.read(member).decode("utf-8-sig")
+                reader = csv.DictReader(io.StringIO(text), strict=True)
+                headers = reader.fieldnames or []
+                if not required_columns.issubset(headers):
+                    raise RefreshError(
+                        f"Invalid service-date columns in {filename} for {source['id']}"
+                    )
+                found_row = False
+                for row in reader:
+                    found_row = True
+                    if filename == "calendar_dates.txt" and any(
+                        not (row.get(key, "") or "").strip()
+                        for key in ("service_id", "exception_type")
+                    ):
+                        raise RefreshError(
+                            f"Missing required service exception value in {source['id']}"
+                        )
+                    keys = (
+                        ("start_date", "end_date")
+                        if filename == "calendar.txt" else ("date",)
+                    )
+                    for key in keys:
+                        value = row.get(key, "") or ""
+                        if not value.isdigit() or len(value) != 8:
+                            raise RefreshError(
+                                f"Invalid {key} in {filename} for {source['id']}"
+                            )
+                        try:
+                            datetime.strptime(value, "%Y%m%d")
+                        except ValueError as exc:
+                            raise RefreshError(
+                                f"Invalid {key} in {filename} for {source['id']}"
+                            ) from exc
+                        dates.append(value)
+                    if filename == "calendar.txt" and row["start_date"] > row["end_date"]:
+                        raise RefreshError(
+                            f"Invalid calendar date range in {source['id']}"
+                        )
+                if not found_row:
+                    raise RefreshError(f"Empty {filename} in {source['id']}")
+            except (UnicodeDecodeError, csv.Error) as exc:
+                raise RefreshError(
+                    f"Invalid service dates in {filename} for {source['id']}"
+                ) from exc
+        if not dates:
+            raise RefreshError(f"No service dates found in GTFS ZIP for {source['id']}")
+        return min(dates), max(dates), attribution_text
+
+
+def _json_timestamp(data: bytes) -> int | None:
+    try:
+        value = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise RefreshError("Invalid JSON trip-updates source")
+
+    def scan(item):
+        if isinstance(item, dict):
+            for key, candidate in item.items():
+                if key.casefold() in {"timestamp", "updated_at", "update_time", "retrieved_at"}:
+                    if isinstance(candidate, (int, float)):
+                        return int(candidate)
+                    if isinstance(candidate, str):
+                        try:
+                            parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+                            return int(parsed.timestamp())
+                        except ValueError:
+                            pass
+                found = scan(candidate)
+                if found is not None:
+                    return found
+        elif isinstance(item, list):
+            for candidate in item:
+                found = scan(candidate)
+                if found is not None:
+                    return found
+        return None
+
+    return scan(value)
+
+
+def _utc_datetime(timestamp: int) -> str:
+    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _source_record(source: dict, output: Path) -> dict:
+    kind = source["kind"]
+    limit = MAX_STATIC_BYTES if kind == "static_gtfs" else MAX_REALTIME_BYTES
+    record = {
+        "id": source["id"],
+        "operator": source["operator"],
+        "kind": kind,
+        "url": source["url"],
+        "geographic_coverage": source["geographic_coverage"],
+        "license": source["license"],
+        "required": source["required"],
+        "approved_for_download": source.get("approved_for_download", False),
+        "status": "available",
+    }
+    if "limitations" in source:
+        record["limitations"] = source["limitations"]
+    if "upstream_readme" in source:
+        record["upstream_readme"] = source["upstream_readme"]
+    if not source.get("approved_for_download"):
+        record["status"] = "not_approved"
+        return record
+    record["attempted_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    filename = None
+    try:
+        data = download(source["url"], limit)
+        record["retrieved_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        filename = f"{source['id']}.zip" if kind == "static_gtfs" else (
+            f"{source['id']}.json" if kind.endswith("_json") else f"{source['id']}.pb"
+        )
+        (output / filename).write_bytes(data)
+        record.update({
+            "file": filename,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size_bytes": len(data),
+        })
+        if kind == "static_gtfs":
+            start_date, end_date, attribution_text = _validate_gtfs(data, source)
+            record["feed_validity"] = {
+                "start_date": start_date,
+                "end_date": end_date,
+                "expired": end_date < datetime.now(timezone.utc).strftime("%Y%m%d"),
+            }
+            if attribution_text is not None:
+                record["attribution_text"] = attribution_text
+                attribution_filename = (
+                    "attributions.txt" if source["id"] == "ztm-warsaw-static"
+                    else f"{source['id']}-attributions.txt"
+                )
+                (output / attribution_filename).write_text(
+                    attribution_text, encoding="utf-8"
+                )
+        elif kind.endswith("_json"):
+            timestamp = _json_timestamp(data)
+            record["feed_header_timestamp"] = _utc_datetime(timestamp) if timestamp else None
+        else:
+            timestamp = feed_header_timestamp(data)
+            if timestamp is None:
+                raise RefreshError("GTFS-Realtime FeedHeader timestamp is missing")
+            record["feed_header_timestamp"] = _utc_datetime(timestamp) if timestamp else None
+        if kind != "static_gtfs":
+            timestamp = None
+            timestamp_text = record.get("feed_header_timestamp")
+            if timestamp_text:
+                timestamp = int(datetime.fromisoformat(timestamp_text.replace("Z", "+00:00")).timestamp())
+            if timestamp is None and kind.endswith("_json"):
+                timestamp = _json_timestamp(data)
+                if timestamp:
+                    record["feed_header_timestamp"] = _utc_datetime(timestamp)
+            stale_after = source.get("stale_after_seconds")
+            if stale_after is None:
+                raise RefreshError(
+                    f"Missing stale_after_seconds for realtime source {source['id']}"
+                )
+            record["freshness"] = (
+                "unknown" if timestamp is None else
+                "stale" if time.time() - timestamp > stale_after else "fresh"
+            )
+            record["stale_after_seconds"] = stale_after
+            if kind == "gtfs_realtime_vehicle_positions":
+                feed_date = (
+                    datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+                    if timestamp is not None else "unknown"
+                )
+                record["required_attribution"] = source["attribution_template"].format(
+                    feed_header_date=feed_date
+                )
+        return record
+    except Exception as exc:
+        if filename is not None:
+            (output / filename).unlink(missing_ok=True)
+        for key in (
+            "file",
+            "sha256",
+            "size_bytes",
+            "feed_validity",
+            "attribution_text",
+            "feed_header_timestamp",
+            "freshness",
+            "stale_after_seconds",
+            "required_attribution",
+        ):
+            record.pop(key, None)
+        if source["required"]:
+            raise RefreshError(f"Required source {source['id']} failed: {exc}") from exc
+        record.update({"status": "unavailable", "error": str(exc)})
+        return record
+
+
+def refresh(output_dir: Path) -> Path:
+    """Publish a complete static snapshot and return its directory."""
+    config = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+    approval = config.get("approval", {})
+    if approval.get("status") != "approved" or not approval.get("approved_on"):
+        raise RefreshError("Source registry has no recorded owner approval")
+    sources = config["sources"]
+    unapproved_required = [
+        source["id"]
+        for source in sources
+        if source.get("required") and not source.get("approved_for_download")
+    ]
+    if unapproved_required:
+        raise RefreshError(
+            "Required sources are not approved: " + ", ".join(unapproved_required)
+        )
+    output_dir = Path(output_dir)
+    snapshots = output_dir / "snapshots"
+    snapshots.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=snapshots))
+    try:
+        records = [_source_record(source, staging) for source in sources]
+        unavailable_required = [
+            record["id"]
+            for record in records
+            if record["required"] and record["status"] != "available"
+        ]
+        if unavailable_required:
+            raise RefreshError(
+                "Required sources are unavailable or unapproved: "
+                + ", ".join(unavailable_required)
+            )
         manifest = {
             "schema_version": 1,
-            "snapshot_id": uuid.uuid4().hex,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "sources": sources_manifest,
+            "source_index_url": config["index_url"],
+            "source_approval": approval,
+            "retrieved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "sources": records,
         }
         manifest_path = staging / "manifest.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        snapshot = snapshots / manifest["snapshot_id"]
-        staging.rename(snapshot)
-        current_tmp = snapshot_root / f".current-{uuid.uuid4().hex}"
-        current_tmp.symlink_to(Path("snapshots") / manifest["snapshot_id"])
-        current_tmp.replace(snapshot_root / "current")
-        return manifest
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        snapshot_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+        for path in staging.iterdir():
+            path.chmod(0o444)
+        staging.chmod(0o555)
+        snapshot = snapshots / snapshot_id
+        os.replace(staging, snapshot)
+        pointer_tmp = output_dir / f".current-{uuid.uuid4().hex}.tmp"
+        pointer_tmp.write_text(json.dumps({"snapshot": snapshot_id}) + "\n", encoding="utf-8")
+        os.replace(pointer_tmp, output_dir / "current.json")
+        return snapshot
     except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
         raise
 
 
-if __name__ == "__main__":
-    config = os.environ.get("SOURCES_CONFIG", "/app/sources.json")
-    root = os.environ.get("SNAPSHOT_ROOT", "/data/transport")
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True, help="snapshot output directory")
+    args = parser.parse_args(argv)
     try:
-        result = refresh(config, root)
-    except Exception as error:
-        print(f"refresh failed: {error}", file=sys.stderr)
-        sys.exit(1)
-    print(f"published snapshot {result['snapshot_id']}")
+        snapshot = refresh(args.output)
+    except Exception as exc:
+        print(f"Refresh failed; current snapshot was not changed: {exc}", file=sys.stderr)
+        return 1
+    print(snapshot)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
