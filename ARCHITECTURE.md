@@ -3,8 +3,9 @@
 ## Status and decision ownership
 
 This is a scaffold for a Mazovian high school comparison proof of concept.
-Nothing described below is implemented yet. Each component's
-`ARCHITECTURE.md` is input for a separate Copilot implementation round.
+Transport-data refresh and OTP routing have a local implementation; the other
+components remain briefs. Each component's `ARCHITECTURE.md` records its
+current implementation status and contract.
 
 The repository owner controls architecture boundaries: components, their
 responsibilities, product scope, and where user data may live. Copilot chooses
