@@ -13,11 +13,11 @@ routing engine. It does not scrape school websites or build the OTP graph.
 
 ## Inputs and outputs
 
-- Inputs: the source registry in `sources.json`; the current refresh includes
-  the owner-approved Warsaw, WKD, and Polish Trains feeds listed there. The
-  Polish Trains feed covers Poland and is not limited to Mazowieckie. Approval
-  is limited to these feeds and their listed source terms; it does not resolve
-  the main architecture's broader coverage question or approve future sources.
+- Inputs: the candidate source registry in `sources.json`. It lists Warsaw,
+  WKD, and Polish Trains feeds, but owner approval for retrieval and snapshot
+  publication is still pending. The Polish Trains feed covers Poland and is not
+  limited to Mazowieckie. The registry does not resolve the main architecture's
+  broader coverage question.
 - Outputs: immutable snapshot directories under the configured output path,
   retaining each downloaded file separately with a versioned `manifest.json`.
   `current.json` points to the latest successfully published snapshot.
@@ -41,9 +41,10 @@ routing engine. It does not scrape school websites or build the OTP graph.
 - Publish `current.json` atomically only after all required static inputs
   validate. Failed refreshes leave the previous pointer and snapshot intact.
   Snapshots are retained; cleanup/retention scheduling is not implemented.
-- `sources.json` records the owner approval, feed inventory, and terms. The
-  refresh fails closed unless the registry records that approval and each
-  downloaded source is individually approved.
+- `sources.json` records the candidate feed inventory and terms. All sources
+  are disabled pending explicit owner approval; the refresh fails closed until
+  the registry records approval and each downloaded source is individually
+  approved. Confirm terms and redistribution permission before enabling feeds.
 
 Run a refresh with:
 

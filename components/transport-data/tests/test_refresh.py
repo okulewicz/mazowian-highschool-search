@@ -275,7 +275,7 @@ class RefreshTests(unittest.TestCase):
             encoding="utf-8",
         )
         with patch.object(refresh_module, "download") as download_mock:
-            with self.assertRaisesRegex(refresh_module.RefreshError, "unavailable or unapproved"):
+            with self.assertRaisesRegex(refresh_module.RefreshError, "Required sources are not approved"):
                 refresh_module.refresh(self.output)
         download_mock.assert_not_called()
         self.assertFalse((self.output / "current.json").exists())
@@ -286,6 +286,18 @@ class RefreshTests(unittest.TestCase):
         self.config_path.write_text(json.dumps(config), encoding="utf-8")
         with patch.object(refresh_module, "download") as download_mock:
             with self.assertRaises(refresh_module.RefreshError):
+                refresh_module.refresh(self.output)
+        download_mock.assert_not_called()
+        self.assertFalse((self.output / "current.json").exists())
+
+    def test_candidate_registry_fails_closed_before_download(self):
+        patcher = patch.object(
+            refresh_module, "SOURCES_FILE", COMPONENT_DIR / "sources.json"
+        )
+        with patcher, patch.object(refresh_module, "download") as download_mock:
+            with self.assertRaisesRegex(
+                refresh_module.RefreshError, "no recorded owner approval"
+            ):
                 refresh_module.refresh(self.output)
         download_mock.assert_not_called()
         self.assertFalse((self.output / "current.json").exists())
@@ -369,8 +381,9 @@ class RefreshTests(unittest.TestCase):
             record["url"].startswith("https://mkuran.pl/gtfs/")
             for record in records
         ))
-        self.assertTrue(all(record["approved_for_download"] for record in records))
-        self.assertEqual(config["approval"]["status"], "approved")
+        self.assertTrue(all(not record["approved_for_download"] for record in records))
+        self.assertEqual(config["approval"]["status"], "pending_owner_approval")
+        self.assertNotIn("approved_on", config["approval"])
 
 
 if __name__ == "__main__":
