@@ -29,6 +29,10 @@ by the task. These briefs are the handoff documents for successive rounds.
   Update both producer and consumer briefs when changing an interface.
 - Keep scaffold checks distinct from application tests. Do not add no-op tests,
   Dockerfiles, or deployments that imply unimplemented features are working.
+- Maintain `CHANGELOG.md` according to
+  [Keep a Changelog 1.0.0](https://keepachangelog.com/pl/1.0.0/), recording
+  notable changes under `Unreleased` and organizing them by the standard
+  change categories.
 
 ## Coding behavior (Karpathy guidelines)
 
