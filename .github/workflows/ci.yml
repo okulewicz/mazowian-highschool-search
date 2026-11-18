@@ -28,6 +28,10 @@ jobs:
           for component in transport-data routing school-discovery school-details school-rankings frontend; do
             test -s "components/$component/ARCHITECTURE.md"
           done
+      - name: Run offline transport and routing tests
+        run: |
+          python3 -m unittest discover -s components/transport-data -p 'test_*.py'
+          python3 -m unittest discover -s components/routing -p 'test_*.py'
       - name: Check changed whitespace
         shell: bash
         env:

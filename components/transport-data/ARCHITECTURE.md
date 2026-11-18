@@ -1,6 +1,7 @@
 # Transport data refresh process
 
-Status: placeholder; no downloader or scheduled job exists yet.
+Status: local refresh container implemented; production scheduling and source
+approval for redistribution remain unresolved.
 Read [the main architecture](../../ARCHITECTURE.md) first.
 
 ## Responsibility and boundary
@@ -11,16 +12,32 @@ routing engine. It does not scrape school websites or build the OTP graph.
 
 ## Inputs and outputs
 
-- Inputs: approved GTFS provider URLs, OSM extract URL, coverage, refresh policy,
-  and source licensing/attribution configuration.
+- Inputs: static GTFS URLs in `sources.json` from the Kuran index and the
+  Geofabrik Mazowieckie OSM PBF URL. Refresh is an explicit Docker Compose job.
 - Outputs: immutable snapshot directories containing GTFS ZIPs, OSM PBF data,
   and a versioned manifest consumed by `routing`.
-- Manifest: source URLs, retrieval timestamps, upstream publication/data
-  timestamps where available, SHA-256 checksums, byte sizes, feed validity
-  periods, geographic coverage, licenses, and required attribution. Never
-  store secrets.
-- Publish a current-snapshot pointer only after all required inputs validate.
-  A failed or partial refresh must retain the previous usable snapshot.
+- Manifest: source and final URLs, retrieval timestamps, checksums, file sizes,
+  GTFS service-date bounds, license, attribution, and validation status. The
+  manifest schema does not yet include Geofabrik's upstream data timestamp or
+  explicit coverage metadata. The input list covers static schedules only;
+  realtime endpoints are separate and are not downloaded.
+- The process checks HTTPS redirect hosts, applies timeouts and limited retry,
+  bounds download and archive expansion sizes, validates ZIP contents and the
+  PBF header, and publishes a `current` symlink only after all sources validate.
+  A failed or partial refresh retains the previous snapshot.
+
+Run locally with:
+
+```sh
+docker compose --profile jobs build transport-data
+docker compose --profile jobs run --rm transport-data
+```
+
+Snapshots are written to ignored `.data/transport/`. The command does not build
+or activate an OTP graph. Source terms and attribution are recorded in
+`sources.json`; review the upstream terms before redistributing snapshots.
+There is no configured staleness threshold because refresh cadence is still an
+owner decision. Feed service-date bounds are recorded to expose expired feeds.
 
 ## Approved OSM source
 
@@ -50,14 +67,12 @@ out of version control.
 
 ## Implementation round
 
-1. Confirm providers, permitted usage, coverage, and refresh cadence with owner.
-2. Implement bounded downloads, conditional requests, retry/backoff, and source
-   validation, including redirects, size limits, and safe ZIP handling. Enable
-   the Geofabrik source above without committing its PBF or snapshot.
-3. Validate GTFS structure/service dates and OSM input suitability for OTP
-   v2.10; report expired feeds and missing coverage explicitly.
-4. Provide refresh and validation commands, container packaging, documented
-   scheduling, and snapshot retention behavior.
+1. Confirm coverage, permitted use/redistribution, and refresh cadence with owner.
+2. Extend manifest/source validation to record Geofabrik's upstream timestamp
+   and declared coverage, and add fixture checks for redirects, corrupt or
+   oversized archives, invalid service dates, and partial refreshes.
+3. Add source-specific freshness reporting and retention policy after owner
+   decisions.
 
 ## Acceptance checks
 
