@@ -153,6 +153,10 @@ does not imply fully offline or network-private operation.
   infrastructure's model endpoint directly to the frontend.
 - Keep secrets, downloaded datasets, OTP graphs, and personal project exports
   out of version control. CI must use synthetic fixtures, not live scraping.
+- Maintain `CHANGELOG.md` according to
+  [Keep a Changelog 1.0.0](https://keepachangelog.com/pl/1.0.0/), recording
+  notable changes under `Unreleased` and organizing them by the standard
+  change categories.
 
 ## Open questions for the owner
 

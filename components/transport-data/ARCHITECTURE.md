@@ -18,8 +18,9 @@ routing engine. It does not scrape school websites or build the OTP graph.
   and a versioned manifest consumed by `routing`.
 - Manifest: source and final URLs, retrieval timestamps, checksums, file sizes,
   GTFS service-date bounds, license, attribution, and validation status. The
-  input list covers static schedules only; realtime endpoints are separate and
-  are not downloaded.
+  manifest schema does not yet include Geofabrik's upstream data timestamp or
+  explicit coverage metadata. The input list covers static schedules only;
+  realtime endpoints are separate and are not downloaded.
 - The process checks HTTPS redirect hosts, applies timeouts and limited retry,
   bounds download and archive expansion sizes, validates ZIP contents and the
   PBF header, and publishes a `current` symlink only after all sources validate.
@@ -38,13 +39,40 @@ or activate an OTP graph. Source terms and attribution are recorded in
 There is no configured staleness threshold because refresh cadence is still an
 owner decision. Feed service-date bounds are recorded to expose expired feeds.
 
+## Approved OSM source
+
+Use the official Geofabrik [Mazowieckie extract page](https://download.geofabrik.de/europe/poland/mazowieckie.html)
+and its [latest PBF](https://download.geofabrik.de/europe/poland/mazowieckie-latest.osm.pbf).
+Coverage is Geofabrik's Mazowieckie regional extract; do not imply that it
+includes neighboring regions or all cross-border travel.
+
+Record the page URL and the direct PBF URL in each OSM manifest entry, along
+with retrieval time (UTC), upstream data timestamp reported by Geofabrik (when
+available), SHA-256, downloaded byte size, coverage, and schema version. The
+upstream timestamp and size change over time and must be captured on refresh,
+not checked in as fixed values. Treat the extract as OpenStreetMap data under
+[ODbL 1.0](https://www.openstreetmap.org/copyright). Preserve credit to
+OpenStreetMap contributors and Geofabrik's processing attribution (the
+Geofabrik download server identifies data as processed by Geofabrik GmbH and
+created by OpenStreetMap contributors). Before enabling external
+redistribution, verify and satisfy ODbL attribution/share-alike requirements
+and Geofabrik's applicable attribution terms.
+
+Stream downloads to a size-limited temporary file with bounded timeouts and
+retries. Validate the response, PBF readability, and checksum before placing
+it in a new immutable snapshot. Publish by atomic rename/pointer update only
+after every required input validates; on any failure, remove staging data and
+leave the current snapshot unchanged. Keep PBFs and snapshot/build artifacts
+out of version control.
+
 ## Implementation round
 
 1. Confirm coverage, permitted use/redistribution, and refresh cadence with owner.
-2. Add fixture checks for URL redirects, corrupt/oversized archives, invalid
-    service dates, and partial refreshes.
+2. Extend manifest/source validation to record Geofabrik's upstream timestamp
+   and declared coverage, and add fixture checks for redirects, corrupt or
+   oversized archives, invalid service dates, and partial refreshes.
 3. Add source-specific freshness reporting and retention policy after owner
-    decisions.
+   decisions.
 
 ## Acceptance checks
 
